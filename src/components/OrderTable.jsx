@@ -8,6 +8,7 @@ import {
   ChevronDown, 
   Filter, 
   Trash2, 
+  Edit3,
   User, 
   Check, 
   X, 
@@ -23,7 +24,8 @@ export default function OrderTable({
   orders = [], 
   onUpdateOrder, 
   onDeleteOrder, 
-  onSelectCustomer 
+  onSelectCustomer,
+  onEditOrder
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFilter, setDateFilter] = useState('all'); // all, today, yesterday, 7days, thisMonth, custom
@@ -316,7 +318,7 @@ export default function OrderTable({
               <th className="py-3 px-3 min-w-[140px] text-right">Tiền Tất Toán</th>
               <th className="py-3 px-3 min-w-[130px] text-right">Lợi Nhuận</th>
               <th className="py-3 px-3 min-w-[180px]">Ghi Chú</th>
-              <th className="py-3 px-2 w-12 text-center">Xoá</th>
+              <th className="py-3 px-2 w-20 text-center">Thao tác</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/80 text-slate-300">
@@ -375,30 +377,37 @@ export default function OrderTable({
                       {order.order_date || '-'}
                     </td>
 
-                    {/* Product Name & SKU */}
+                    {/* Product Name & SKU (Clickable to view full details and edit) */}
                     <td className="py-2.5 px-3">
-                      <div className="font-medium text-slate-200 line-clamp-1 max-w-[220px]" title={order.product_name}>
-                        {order.product_name || 'Chưa đặt tên'}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
-                        {Array.isArray(order.items) && order.items.length > 1 ? (
-                          order.items.map((it, i) => (
-                            <span key={i} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">
-                              {(it.quantity || 1) > 1 ? `${it.quantity}x ` : ''}{it.sku || it.product_name}
-                            </span>
-                          ))
-                        ) : (
-                          order.sku && (
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">
-                              {order.sku}
-                            </span>
-                          )
-                        )}
-                        <span className="text-[10px] text-slate-400">
-                          {Array.isArray(order.items) && order.items.length > 1 
-                            ? `(${order.items.length} mặt hàng)` 
-                            : (cogsUnit > 0 ? `${cogsUnit.toLocaleString('vi-VN')}₫/sp` : 'Chưa có vốn')}
-                        </span>
+                      <div 
+                        onClick={() => onEditOrder && onEditOrder(order)}
+                        className="group/prod cursor-pointer hover:bg-slate-750/70 p-1.5 -m-1.5 rounded-xl transition-all"
+                        title="Bấm để xem toàn bộ danh sách sản phẩm & chỉnh sửa đơn hàng"
+                      >
+                        <div className="font-medium text-slate-200 group-hover/prod:text-amber-300 transition-colors line-clamp-1 max-w-[220px]" title={order.product_name}>
+                          {order.product_name || 'Chưa đặt tên'}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                          {Array.isArray(order.items) && order.items.length > 1 ? (
+                            order.items.map((it, i) => (
+                              <span key={i} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20 group-hover/prod:border-amber-400/40">
+                                {(it.quantity || 1) > 1 ? `${it.quantity}x ` : ''}{it.sku || it.product_name}
+                              </span>
+                            ))
+                          ) : (
+                            order.sku && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20 group-hover/prod:border-amber-400/40">
+                                {order.sku}
+                              </span>
+                            )
+                          )}
+                          <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                            {Array.isArray(order.items) && order.items.length > 1 
+                              ? `(${order.items.length} mặt hàng)` 
+                              : (cogsUnit > 0 ? `${cogsUnit.toLocaleString('vi-VN')}₫/sp` : 'Chưa có vốn')}
+                            <Edit3 className="w-2.5 h-2.5 opacity-0 group-hover/prod:opacity-100 text-amber-400 transition-opacity" />
+                          </span>
+                        </div>
                       </div>
                     </td>
 
@@ -516,19 +525,30 @@ export default function OrderTable({
                       />
                     </td>
 
-                    {/* Delete button */}
+                    {/* Action buttons (Edit & Delete) */}
                     <td className="py-2.5 px-2 text-center">
-                      <button
-                        onClick={() => {
-                          if (confirm(`Bạn có chắc muốn xoá đơn hàng ${order.tracking_code || order.id}?`)) {
-                            onDeleteOrder(order.id);
-                          }
-                        }}
-                        className="text-slate-500 hover:text-rose-400 p-1 rounded hover:bg-slate-700/50 transition-colors"
-                        title="Xoá đơn hàng"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center justify-center gap-1">
+                        {onEditOrder && (
+                          <button
+                            onClick={() => onEditOrder(order)}
+                            className="text-slate-400 hover:text-amber-400 p-1.5 rounded-lg hover:bg-slate-700/60 transition-colors"
+                            title="Sửa chi tiết đơn hàng (sản phẩm, phân loại SKU, khách hàng...)"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => {
+                            if (confirm(`Bạn có chắc muốn xoá đơn hàng ${order.tracking_code || order.id}?`)) {
+                              onDeleteOrder(order.id);
+                            }
+                          }}
+                          className="text-slate-400 hover:text-rose-400 p-1.5 rounded-lg hover:bg-slate-700/60 transition-colors"
+                          title="Xoá đơn hàng"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );

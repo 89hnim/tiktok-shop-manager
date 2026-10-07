@@ -533,6 +533,131 @@ export function updateOrderField(orderId, fields) {
   return null;
 }
 
+/**
+ * Update full order with recalculated cost snapshot and multi-item management
+ */
+export function updateOrderWithSnapshot(orderId, orderData) {
+  const orders = getOrders();
+  const index = orders.findIndex(o => o.id === orderId);
+  if (index === -1) return null;
+
+  const existing = orders[index];
+  const now = new Date().toISOString();
+  const products = getProducts();
+
+  let rawItems = [];
+  if (Array.isArray(orderData.items) && orderData.items.length > 0) {
+    rawItems = orderData.items;
+  } else {
+    rawItems = [{
+      id: generateUUID(),
+      product_id: orderData.product_id || existing.product_id,
+      sku_id: orderData.sku_id || existing.sku_id,
+      product_name: orderData.product_name || existing.product_name,
+      sku: orderData.sku || existing.sku,
+      quantity: Number(orderData.quantity) || 1,
+      cogs_snapshot: orderData.cogs_snapshot || existing.cogs_snapshot,
+      total_cost_snapshot: orderData.total_cost_snapshot || existing.total_cost_snapshot,
+    }];
+  }
+
+  const processedItems = rawItems.map(it => {
+    let p = null;
+    let s = null;
+
+    if (it.selectedProductId || it.product_id) {
+      p = products.find(prod => prod.id === (it.selectedProductId || it.product_id)) || null;
+    }
+    if (!p && it.sku) {
+      const found = findSkuVariant(products, it.sku);
+      if (found) {
+        p = found.product;
+        s = found.skuVariant;
+      }
+    }
+    if (!s && p && it.sku) {
+      const normSku = String(it.sku).trim().toLowerCase();
+      s = (p.skus || []).find(v => (v.sku || '').trim().toLowerCase() === normSku) || null;
+    }
+    if (!s && p && Array.isArray(p.skus) && p.skus.length > 0) {
+      s = p.skus[0];
+    }
+
+    const cogs_snapshot = s ? (s.cogs_total || 0) : (p ? (p.cogs_total || 0) : (Number(it.cogs_snapshot) || 0));
+    const cost_breakdown_snapshot = s ? JSON.stringify(s.components || []) : (it.cost_breakdown_snapshot || '[]');
+    const expected_price_snapshot = s ? (s.expected_price || 0) : (Number(it.expected_price_snapshot) || 0);
+    const fee_percent_snapshot = s ? (s.tiktok_fee_percent || 0) : (Number(it.tiktok_fee_percent_snapshot) || (p?.tiktok_fee_percent || 0));
+    const fixed_fee_snapshot = s ? (s.tiktok_fixed_fee || 0) : (Number(it.tiktok_fixed_fee_snapshot) || (p?.tiktok_fixed_fee || 0));
+    const total_cost_snapshot = s ? (s.total_cost || 0) : (Number(it.total_cost_snapshot) || cogs_snapshot);
+
+    return {
+      id: it.id || generateUUID(),
+      product_id: p ? p.id : (it.product_id || null),
+      sku_id: s ? s.id : (it.sku_id || null),
+      product_name: it.product_name || (p ? p.name : ''),
+      sku: it.sku || (s ? s.sku : ''),
+      quantity: Math.max(1, Number(it.quantity) || 1),
+      cogs_snapshot,
+      cost_breakdown_snapshot,
+      expected_price_snapshot,
+      tiktok_fee_percent_snapshot: fee_percent_snapshot,
+      tiktok_fixed_fee_snapshot: fixed_fee_snapshot,
+      total_cost_snapshot,
+    };
+  });
+
+  const totalQuantity = processedItems.reduce((sum, it) => sum + (Number(it.quantity) || 1), 0);
+  const totalOrderCogs = processedItems.reduce((sum, it) => sum + (it.cogs_snapshot || 0) * (Number(it.quantity) || 1), 0);
+  const totalOrderCost = processedItems.reduce((sum, it) => sum + (it.total_cost_snapshot || 0) * (Number(it.quantity) || 1), 0);
+
+  const summaryProductName = processedItems
+    .map(it => it.product_name)
+    .filter(Boolean)
+    .filter((v, i, a) => a.indexOf(v) === i)
+    .join(', ') || orderData.product_name || existing.product_name;
+
+  const summarySku = processedItems
+    .map(it => `${(it.quantity || 1) > 1 ? `${it.quantity}x ` : ''}${it.sku || ''}`)
+    .filter(Boolean)
+    .join(' + ') || orderData.sku || existing.sku;
+
+  const primaryItem = processedItems[0] || {};
+
+  orders[index] = {
+    ...existing,
+    tracking_code: orderData.tracking_code !== undefined ? String(orderData.tracking_code).trim() : existing.tracking_code,
+    order_id: orderData.order_id !== undefined ? String(orderData.order_id).trim() : existing.order_id,
+    order_date: orderData.order_date !== undefined ? orderData.order_date : existing.order_date,
+    customer_name: orderData.customer_name !== undefined ? String(orderData.customer_name).trim() : existing.customer_name,
+    customer_phone: orderData.customer_phone !== undefined ? String(orderData.customer_phone).trim() : existing.customer_phone,
+    is_settled: orderData.is_settled !== undefined ? Boolean(orderData.is_settled) : existing.is_settled,
+    settled_amount: orderData.settled_amount !== undefined && orderData.settled_amount !== null && orderData.settled_amount !== ''
+      ? Number(orderData.settled_amount)
+      : null,
+    note: orderData.note !== undefined ? String(orderData.note).trim() : existing.note,
+
+    product_id: primaryItem.product_id || null,
+    sku_id: primaryItem.sku_id || null,
+    product_name: summaryProductName,
+    sku: summarySku,
+    quantity: totalQuantity,
+
+    items: processedItems,
+    cogs_snapshot: processedItems.length === 1 ? primaryItem.cogs_snapshot : (totalQuantity > 0 ? Math.round(totalOrderCogs / totalQuantity) : 0),
+    total_order_cogs: totalOrderCogs,
+    cost_breakdown_snapshot: primaryItem.cost_breakdown_snapshot || '[]',
+    expected_price_snapshot: primaryItem.expected_price_snapshot || 0,
+    tiktok_fee_percent_snapshot: primaryItem.tiktok_fee_percent_snapshot || 0,
+    tiktok_fixed_fee_snapshot: primaryItem.tiktok_fixed_fee_snapshot || 0,
+    total_cost_snapshot: totalOrderCost,
+    updated_at: now,
+  };
+
+  localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(orders));
+  triggerSync();
+  return orders[index];
+}
+
 export function deleteOrder(orderId) {
   const orders = getOrders().filter(o => o.id !== orderId);
   localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(orders));

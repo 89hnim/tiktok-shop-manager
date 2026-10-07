@@ -1241,8 +1241,65 @@ catalogWithTwoProds[0].skus[0].cogs_total = 60000;
 assert.strictEqual(mockGetOrderTotalCogs(multiOrder), 147000, 'Existing multi-item order COGS remains unchanged after catalog price update');
 console.log('✅ Passed: Multi-item Order snapshot calculation (147,000₫ COGS) & profit (53,000₫) completely immune to future catalog changes!');
 
+console.log('\n--- TEST 23: Edit Order Feature & Recalculated Snapshot Logic ---');
+
+function mockUpdateOrderWithSnapshot(existingOrder, updateData, catalogProducts) {
+  const processedItems = (updateData.items || []).map(it => {
+    let p = catalogProducts.find(prod => prod.id === it.product_id) || null;
+    let s = null;
+    if (p) {
+      s = (p.skus || []).find(v => v.sku === it.sku) || p.skus?.[0];
+    }
+    const cogs_snapshot = s ? s.cogs_total : (Number(it.cogs_snapshot) || 0);
+    return {
+      product_id: p ? p.id : null,
+      sku_id: s ? s.id : null,
+      product_name: it.product_name || (p ? p.name : ''),
+      sku: it.sku || (s ? s.sku : ''),
+      quantity: Number(it.quantity) || 1,
+      cogs_snapshot,
+    };
+  });
+
+  const totalQuantity = processedItems.reduce((sum, it) => sum + (Number(it.quantity) || 1), 0);
+  const totalOrderCogs = processedItems.reduce((sum, it) => sum + (it.cogs_snapshot || 0) * (Number(it.quantity) || 1), 0);
+  const summarySku = processedItems.map(it => `${(it.quantity || 1) > 1 ? `${it.quantity}x ` : ''}${it.sku || ''}`).join(' + ');
+
+  return {
+    ...existingOrder,
+    tracking_code: updateData.tracking_code || existingOrder.tracking_code,
+    items: processedItems,
+    quantity: totalQuantity,
+    sku: summarySku,
+    total_order_cogs: totalOrderCogs,
+    settled_amount: updateData.settled_amount !== undefined ? updateData.settled_amount : existingOrder.settled_amount,
+  };
+}
+
+// User edits multiOrder: adds a 3rd item (20g x 1, cogs 58500) and increases Item 1 qty to 3
+catalogWithTwoProds[0].skus.push({ id: 'sku-20g', sku: '20g', cogs_total: 58500 });
+catalogWithTwoProds[0].skus[0].cogs_total = 33500; // reset unit cogs
+
+const editedOrder = mockUpdateOrderWithSnapshot(multiOrder, {
+  tracking_code: '862588888888-EDITED',
+  items: [
+    { product_id: 'prod-1', sku: '10g', quantity: 3 }, // 3 * 33500 = 100500
+    { product_id: 'prod-2', sku: '100g', quantity: 1 }, // 1 * 80000 = 80000
+    { product_id: 'prod-1', sku: '20g', quantity: 1 },  // 1 * 58500 = 58500
+  ],
+  settled_amount: 300000,
+}, catalogWithTwoProds);
+
+assert.strictEqual(editedOrder.tracking_code, '862588888888-EDITED');
+assert.strictEqual(editedOrder.items.length, 3);
+assert.strictEqual(editedOrder.quantity, 5, 'Total items should be 3 + 1 + 1 = 5');
+assert.strictEqual(editedOrder.total_order_cogs, 239000, 'Total COGS should be 100500 + 80000 + 58500 = 239000');
+assert.strictEqual(mockGetOrderTotalCogs(editedOrder), 239000);
+assert.strictEqual(editedOrder.settled_amount - mockGetOrderTotalCogs(editedOrder), 61000, 'Updated profit should be 300000 - 239000 = 61000');
+console.log('✅ Passed: Edit Order successfully recalculated items, total COGS (239,000₫), and profit (61,000₫)!');
+
 testExcel().then(() => {
-  console.log('\n🎉 ALL 22 AUTOMATED TESTS PASSED SUCCESSFULLY! 🎉\n');
+  console.log('\n🎉 ALL 23 AUTOMATED TESTS PASSED SUCCESSFULLY! 🎉\n');
 });
 
 

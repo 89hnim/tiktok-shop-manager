@@ -23,6 +23,7 @@ import {
   createOrderWithSnapshot,
   batchCreateOrders,
   updateOrderField,
+  updateOrderWithSnapshot,
   deleteOrder
 } from './services/dbService';
 import { exportToExcelFile } from './services/excelService';
@@ -45,6 +46,7 @@ export default function App() {
   // Modals state
   const [isScanOpen, setIsScanOpen] = useState(false);
   const [isManualOrderOpen, setIsManualOrderOpen] = useState(false);
+  const [editingOrder, setEditingOrder] = useState(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
   // Customer Intelligence Modal
@@ -114,6 +116,12 @@ export default function App() {
 
   const handleCreateOrder = (orderData, matchedProduct) => {
     createOrderWithSnapshot(orderData, matchedProduct);
+    refreshData();
+  };
+
+  const handleUpdateOrderWithSnapshot = (orderId, orderData) => {
+    updateOrderWithSnapshot(orderId, orderData);
+    setEditingOrder(null);
     refreshData();
   };
 
@@ -198,6 +206,7 @@ export default function App() {
                 onUpdateOrder={handleUpdateOrder}
                 onDeleteOrder={handleDeleteOrder}
                 onSelectCustomer={handleSelectCustomer}
+                onEditOrder={(order) => setEditingOrder(order)}
               />
             </div>
           ) : (
@@ -229,13 +238,18 @@ export default function App() {
         />
       </ErrorBoundary>
 
-      {/* Manual Order Creation Modal */}
+      {/* Manual Order Creation & Edit Modal */}
       <ErrorBoundary onOpenErrorLog={() => setIsErrorLogOpen(true)}>
         <ManualOrderModal
-          isOpen={isManualOrderOpen}
-          onClose={() => setIsManualOrderOpen(false)}
+          isOpen={isManualOrderOpen || Boolean(editingOrder)}
+          onClose={() => {
+            setIsManualOrderOpen(false);
+            setEditingOrder(null);
+          }}
           products={products}
+          initialOrder={editingOrder}
           onCreateOrder={handleCreateOrder}
+          onUpdateOrder={handleUpdateOrderWithSnapshot}
         />
       </ErrorBoundary>
 

@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
-import { PlusCircle, X, Save, Package, Calendar, User, Phone, DollarSign, Plus, Trash2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { PlusCircle, Edit3, X, Save, Package, Calendar, User, Phone, DollarSign, Plus, Trash2 } from 'lucide-react';
 import { generateUUID } from '../services/dbService';
 
 export default function ManualOrderModal({
   isOpen,
   onClose,
   products = [],
-  onCreateOrder
+  initialOrder = null,
+  onCreateOrder,
+  onUpdateOrder,
 }) {
   const [formData, setFormData] = useState({
     tracking_code: '',
@@ -27,6 +29,66 @@ export default function ManualOrderModal({
     settled_amount: '',
     note: '',
   });
+
+  const isEditing = Boolean(initialOrder);
+
+  // Sync state whenever initialOrder or modal open state changes
+  useEffect(() => {
+    if (isOpen) {
+      if (initialOrder) {
+        let initialItems = [];
+        if (Array.isArray(initialOrder.items) && initialOrder.items.length > 0) {
+          initialItems = initialOrder.items.map(it => ({
+            id: it.id || generateUUID(),
+            selectedProductId: it.product_id || '',
+            product_name: it.product_name || '',
+            sku: it.sku || '',
+            quantity: it.quantity || 1,
+          }));
+        } else {
+          initialItems = [{
+            id: generateUUID(),
+            selectedProductId: initialOrder.product_id || '',
+            product_name: initialOrder.product_name || '',
+            sku: initialOrder.sku || '',
+            quantity: initialOrder.quantity || 1,
+          }];
+        }
+
+        setFormData({
+          tracking_code: initialOrder.tracking_code || '',
+          order_id: initialOrder.order_id || '',
+          order_date: initialOrder.order_date || new Date().toISOString().slice(0, 16).replace('T', ' '),
+          items: initialItems,
+          customer_name: initialOrder.customer_name || '',
+          customer_phone: initialOrder.customer_phone || '',
+          is_settled: Boolean(initialOrder.is_settled),
+          settled_amount: initialOrder.settled_amount !== null && initialOrder.settled_amount !== undefined ? String(initialOrder.settled_amount) : '',
+          note: initialOrder.note || '',
+        });
+      } else {
+        setFormData({
+          tracking_code: '',
+          order_id: '',
+          order_date: new Date().toISOString().slice(0, 16).replace('T', ' '),
+          items: [
+            {
+              id: generateUUID(),
+              selectedProductId: '',
+              product_name: '',
+              sku: '',
+              quantity: 1,
+            }
+          ],
+          customer_name: '',
+          customer_phone: '',
+          is_settled: false,
+          settled_amount: '',
+          note: '',
+        });
+      }
+    }
+  }, [isOpen, initialOrder]);
 
   if (!isOpen) return null;
 
@@ -133,8 +195,7 @@ export default function ManualOrderModal({
 
     const primaryProd = products.find(p => p.id === processedItems[0]?.product_id);
 
-    onCreateOrder({
-      id: generateUUID(),
+    const payload = {
       tracking_code: formData.tracking_code.trim(),
       order_id: formData.order_id.trim(),
       order_date: formData.order_date,
@@ -144,7 +205,16 @@ export default function ManualOrderModal({
       is_settled: formData.is_settled,
       settled_amount: formData.settled_amount !== '' ? Number(formData.settled_amount) : null,
       note: formData.note.trim(),
-    }, primaryProd);
+    };
+
+    if (isEditing && onUpdateOrder) {
+      onUpdateOrder(initialOrder.id, payload);
+    } else if (onCreateOrder) {
+      onCreateOrder({
+        ...payload,
+        id: generateUUID(),
+      }, primaryProd);
+    }
 
     onClose();
   };
@@ -155,12 +225,23 @@ export default function ManualOrderModal({
         {/* Header */}
         <div className="p-5 border-b border-slate-800 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center">
-              <PlusCircle className="w-5 h-5" />
+            <div className={`w-9 h-9 rounded-xl flex items-center justify-center border ${
+              isEditing 
+                ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' 
+                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+            }`}>
+              {isEditing ? <Edit3 className="w-5 h-5" /> : <PlusCircle className="w-5 h-5" />}
             </div>
             <div>
-              <h3 className="font-bold text-white text-base">Tạo Đơn Hàng Thủ Công</h3>
-              <p className="text-xs text-slate-400">Hỗ trợ đơn 1 sản phẩm hoặc nhiều sản phẩm / SKU khác nhau</p>
+              <h3 className="font-bold text-white text-base">
+                {isEditing ? 'Chỉnh Sửa Đơn Hàng' : 'Tạo Đơn Hàng Thủ Công'}
+              </h3>
+              <p className="text-xs text-slate-400">
+                {isEditing 
+                  ? `Sửa mặt hàng, phân loại SKU, khách hàng hoặc số tiền đơn: ${formData.tracking_code || '...'}`
+                  : 'Hỗ trợ đơn 1 sản phẩm hoặc nhiều sản phẩm / SKU khác nhau'
+                }
+              </p>
             </div>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800">
@@ -397,10 +478,14 @@ export default function ManualOrderModal({
             </button>
             <button
               type="submit"
-              className="flex items-center gap-1.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 text-white font-medium px-5 py-2 rounded-xl text-xs shadow-lg shadow-emerald-500/25 transition-all"
+              className={`flex items-center gap-1.5 text-white font-medium px-5 py-2 rounded-xl text-xs shadow-lg transition-all ${
+                isEditing
+                  ? 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 shadow-amber-500/25'
+                  : 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 shadow-emerald-500/25'
+              }`}
             >
               <Save className="w-3.5 h-3.5" />
-              <span>Tạo Đơn Hàng</span>
+              <span>{isEditing ? 'Lưu Thay Đổi Đơn Hàng' : 'Tạo Đơn Hàng'}</span>
             </button>
           </div>
         </form>
