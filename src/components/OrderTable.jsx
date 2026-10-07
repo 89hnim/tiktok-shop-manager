@@ -2,21 +2,22 @@ import React, { useState, useMemo } from 'react';
 import { 
   Search, 
   Calendar, 
-  CalendarRange,
-  ChevronLeft,
-  ChevronRight,
-  ChevronDown,
+  CalendarRange, 
+  ChevronLeft, 
+  ChevronRight, 
+  ChevronDown, 
   Filter, 
   Trash2, 
   User, 
   Check, 
   X, 
   Info, 
-  Sparkles,
-  ArrowUpDown,
-  Tag,
-  PhoneCall
+  Sparkles, 
+  ArrowUpDown, 
+  Tag, 
+  PhoneCall 
 } from 'lucide-react';
+import { getOrderTotalCogs } from '../services/dbService';
 
 export default function OrderTable({ 
   orders = [], 
@@ -332,8 +333,8 @@ export default function OrderTable({
             ) : (
               filteredOrders.map((order, idx) => {
                 const qty = order.quantity || 1;
-                const cogsUnit = order.cogs_snapshot || 0;
-                const totalCogs = cogsUnit * qty;
+                const totalCogs = getOrderTotalCogs(order);
+                const cogsUnit = qty > 0 ? Math.round(totalCogs / qty) : (order.cogs_snapshot || 0);
                 const isSettled = Boolean(order.is_settled);
                 const settledAmount = order.settled_amount;
                 const actualProfit = settledAmount !== null && settledAmount !== undefined
@@ -379,14 +380,24 @@ export default function OrderTable({
                       <div className="font-medium text-slate-200 line-clamp-1 max-w-[220px]" title={order.product_name}>
                         {order.product_name || 'Chưa đặt tên'}
                       </div>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        {order.sku && (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">
-                            {order.sku}
-                          </span>
+                      <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                        {Array.isArray(order.items) && order.items.length > 1 ? (
+                          order.items.map((it, i) => (
+                            <span key={i} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                              {(it.quantity || 1) > 1 ? `${it.quantity}x ` : ''}{it.sku || it.product_name}
+                            </span>
+                          ))
+                        ) : (
+                          order.sku && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                              {order.sku}
+                            </span>
+                          )
                         )}
                         <span className="text-[10px] text-slate-400">
-                          {cogsUnit > 0 ? `${cogsUnit.toLocaleString('vi-VN')}₫/sp` : 'Chưa có vốn'}
+                          {Array.isArray(order.items) && order.items.length > 1 
+                            ? `(${order.items.length} mặt hàng)` 
+                            : (cogsUnit > 0 ? `${cogsUnit.toLocaleString('vi-VN')}₫/sp` : 'Chưa có vốn')}
                         </span>
                       </div>
                     </td>

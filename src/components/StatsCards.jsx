@@ -9,6 +9,7 @@ import {
   RotateCcw,
   Wallet
 } from 'lucide-react';
+import { getOrderTotalCogs } from '../services/dbService';
 
 export default function StatsCards({ orders = [] }) {
   const totalOrders = orders.length;
@@ -26,8 +27,7 @@ export default function StatsCards({ orders = [] }) {
   let totalSettledCogs = 0;
 
   settledOrders.forEach(o => {
-    const qty = o.quantity || 1;
-    const cogs = (o.cogs_snapshot || 0) * qty;
+    const cogs = getOrderTotalCogs(o);
     totalSettledCogs += cogs;
     if (o.settled_amount !== null && o.settled_amount !== undefined) {
       totalSettledRevenue += Number(o.settled_amount);
@@ -37,7 +37,7 @@ export default function StatsCards({ orders = [] }) {
   const netProfit = totalSettledRevenue - totalSettledCogs;
 
   // Total cogs of ALL orders
-  const totalAllCogs = orders.reduce((sum, o) => sum + ((o.cogs_snapshot || 0) * (o.quantity || 1)), 0);
+  const totalAllCogs = orders.reduce((sum, o) => sum + getOrderTotalCogs(o), 0);
 
   const formatMoney = (amount) => {
     return Number(amount || 0).toLocaleString('vi-VN') + ' ₫';

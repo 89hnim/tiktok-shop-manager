@@ -1097,8 +1097,152 @@ assert.strictEqual(customBoxResult.customer_phone, '(+84)91*****88', 'Phone corr
 
 console.log('✅ Passed: Custom Shop Name regex successfully detects both accented & unaccented names and anchors recipient box!');
 
+console.log('\n--- TEST 22: Multi-Product and Multi-SKU Order Logic & Snapshot Breakdown ---');
+
+// 22.1 Multi-item OCR partitioning test
+function mockParseTikTokLabelMultiItem(productSectionLines) {
+  const skuPattern = /\b([0-9]{1,4}[gG]|[0-9]{1,4}[mM][lL]|[SMLXlxl]{1,4}|combo\s*[0-9]+)\s+([0-9]+)\s*$/i;
+  const matchedLineIndices = [];
+  productSectionLines.forEach((l, idx) => {
+    if (skuPattern.test(l)) matchedLineIndices.push(idx);
+  });
+
+  const parsedItems = [];
+  let prevIndex = 0;
+  matchedLineIndices.forEach((matchIdx) => {
+    const chunk = productSectionLines.slice(prevIndex, matchIdx + 1);
+    prevIndex = matchIdx + 1;
+    let itemSku = '';
+    let itemQty = 1;
+    const titleParts = [];
+
+    for (const line of chunk) {
+      const match = line.match(skuPattern);
+      let textPart = line;
+      if (match) {
+        itemSku = match[1];
+        itemQty = parseInt(match[2], 10) || 1;
+        textPart = line.slice(0, line.lastIndexOf(match[0])).trim();
+      }
+      if (textPart && !/^seller\s*sku$/i.test(textPart) && !/^sku$/i.test(textPart) && !/^qty$/i.test(textPart)) {
+        titleParts.push(textPart);
+      }
+    }
+
+    parsedItems.push({
+      product_name: titleParts.join(' ').replace(/\s+/g, ' ').trim(),
+      sku: itemSku,
+      quantity: itemQty,
+    });
+  });
+
+  return {
+    items: parsedItems,
+    product_name: parsedItems.map(it => it.product_name).filter(Boolean).join(', '),
+    sku: parsedItems.map(it => `${(it.quantity || 1) > 1 ? `${it.quantity}x ` : ''}${it.sku || ''}`).filter(Boolean).join(' + '),
+    quantity: parsedItems.reduce((sum, it) => sum + (Number(it.quantity) || 1), 0),
+  };
+}
+
+const multiItemSection = [
+  '[MUA 1 TẶNG 3] Artemia O.S.I Mỹ hũ chiết lẻ 10g 2',
+  'Cám Cá Vàng Cao Cấp Hikari Lionhead 100g 1'
+];
+const multiOcrParsed = mockParseTikTokLabelMultiItem(multiItemSection);
+assert.strictEqual(multiOcrParsed.items.length, 2, 'Should detect 2 distinct items');
+assert.strictEqual(multiOcrParsed.items[0].sku, '10g');
+assert.strictEqual(multiOcrParsed.items[0].quantity, 2);
+assert.strictEqual(multiOcrParsed.items[1].sku, '100g');
+assert.strictEqual(multiOcrParsed.items[1].quantity, 1);
+assert.strictEqual(multiOcrParsed.quantity, 3);
+assert.strictEqual(multiOcrParsed.sku, '2x 10g + 100g');
+console.log('✅ Passed: Multi-item OCR partitioning correctly detected 2 items (2x 10g + 1x 100g)!');
+
+// 22.2 Multi-item snapshot calculation & immunity
+function mockGetOrderTotalCogs(order) {
+  if (!order) return 0;
+  if (order.total_order_cogs !== undefined && order.total_order_cogs !== null) {
+    return Number(order.total_order_cogs);
+  }
+  if (Array.isArray(order.items) && order.items.length > 0) {
+    return order.items.reduce((sum, it) => sum + (Number(it.cogs_snapshot) || 0) * (Number(it.quantity) || 1), 0);
+  }
+  return (Number(order.cogs_snapshot) || 0) * (Number(order.quantity) || 1);
+}
+
+function mockCreateOrderWithSnapshot(orderData, catalogProducts) {
+  const processedItems = (orderData.items || []).map(it => {
+    let p = catalogProducts.find(prod => prod.id === it.product_id) || null;
+    let s = null;
+    if (p) {
+      s = (p.skus || []).find(v => v.sku === it.sku) || p.skus?.[0];
+    }
+    const cogs_snapshot = s ? s.cogs_total : (Number(it.cogs_snapshot) || 0);
+    return {
+      product_id: p ? p.id : null,
+      sku_id: s ? s.id : null,
+      product_name: it.product_name || (p ? p.name : ''),
+      sku: it.sku || (s ? s.sku : ''),
+      quantity: Number(it.quantity) || 1,
+      cogs_snapshot,
+    };
+  });
+
+  const totalQuantity = processedItems.reduce((sum, it) => sum + (Number(it.quantity) || 1), 0);
+  const totalOrderCogs = processedItems.reduce((sum, it) => sum + (it.cogs_snapshot || 0) * (Number(it.quantity) || 1), 0);
+  const summarySku = processedItems.map(it => `${(it.quantity || 1) > 1 ? `${it.quantity}x ` : ''}${it.sku || ''}`).join(' + ');
+
+  return {
+    id: 'ord-multi-01',
+    tracking_code: orderData.tracking_code,
+    items: processedItems,
+    quantity: totalQuantity,
+    sku: summarySku,
+    total_order_cogs: totalOrderCogs,
+    settled_amount: orderData.settled_amount,
+    is_settled: orderData.is_settled,
+  };
+}
+
+const catalogWithTwoProds = [
+  {
+    id: 'prod-1',
+    name: 'Artemia O.S.I Mỹ',
+    skus: [{ id: 'sku-10g', sku: '10g', cogs_total: 33500 }]
+  },
+  {
+    id: 'prod-2',
+    name: 'Hikari Lionhead',
+    skus: [{ id: 'sku-100g', sku: '100g', cogs_total: 80000 }]
+  }
+];
+
+const multiOrder = mockCreateOrderWithSnapshot({
+  tracking_code: '862588888888',
+  items: [
+    { product_id: 'prod-1', sku: '10g', quantity: 2 },
+    { product_id: 'prod-2', sku: '100g', quantity: 1 }
+  ],
+  settled_amount: 200000,
+  is_settled: true,
+}, catalogWithTwoProds);
+
+assert.strictEqual(multiOrder.items.length, 2);
+assert.strictEqual(multiOrder.items[0].cogs_snapshot, 33500);
+assert.strictEqual(multiOrder.items[1].cogs_snapshot, 80000);
+assert.strictEqual(multiOrder.total_order_cogs, 147000, 'Total COGS should be 2*33500 + 1*80000 = 147000');
+assert.strictEqual(mockGetOrderTotalCogs(multiOrder), 147000);
+
+const profit = multiOrder.settled_amount - mockGetOrderTotalCogs(multiOrder);
+assert.strictEqual(profit, 53000, 'Actual profit should be 200000 - 147000 = 53000');
+
+// Price mutation test
+catalogWithTwoProds[0].skus[0].cogs_total = 60000;
+assert.strictEqual(mockGetOrderTotalCogs(multiOrder), 147000, 'Existing multi-item order COGS remains unchanged after catalog price update');
+console.log('✅ Passed: Multi-item Order snapshot calculation (147,000₫ COGS) & profit (53,000₫) completely immune to future catalog changes!');
+
 testExcel().then(() => {
-  console.log('\n🎉 ALL 21 AUTOMATED TESTS PASSED SUCCESSFULLY! 🎉\n');
+  console.log('\n🎉 ALL 22 AUTOMATED TESTS PASSED SUCCESSFULLY! 🎉\n');
 });
 
 

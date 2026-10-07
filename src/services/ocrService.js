@@ -357,9 +357,9 @@ export function parseTikTokLabelText(fullText, options = {}) {
   result.customer_name = recipInfo.customer_name;
   result.customer_phone = recipInfo.customer_phone;
 
-  // 5. Extract Complete Multi-line Product Name, SKU, and Quantity
+  // 5. Extract Multi-line Product Name, SKU, and Quantity (Supports Multiple Products & SKUs)
   let inProductSection = false;
-  const productTitleParts = [];
+  const productSectionLines = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -370,49 +370,115 @@ export function parseTikTokLabelText(fullText, options = {}) {
     }
 
     if (inProductSection) {
-      // Stop condition: reach table footer
       if (/qty\s*total|tổng\s*sl|tiktok\s*shop|order\s*id/i.test(line)) {
         break;
       }
+      productSectionLines.push(line);
+    }
+  }
 
-      // Check if line contains SKU & Qty on the right (e.g., "10g 3" or "20g 1")
-      const skuQtyMatch = line.match(/\b([0-9]{1,4}[gG]|[0-9]{1,4}[mM][lL]|[SMLXlxl]{1,4}|combo\s*[0-9]+)\s+([0-9]+)\s*$/i);
+  // Detect lines containing SKU & Qty pattern: e.g. "10g 2", "20g 1", "Combo 2", "M 1"
+  const skuPattern = /\b([0-9]{1,4}[gG]|[0-9]{1,4}[mM][lL]|[SMLXlxl]{1,4}|combo\s*[0-9]+)\s+([0-9]+)\s*$/i;
+  const matchedLineIndices = [];
+  productSectionLines.forEach((l, idx) => {
+    if (skuPattern.test(l)) {
+      matchedLineIndices.push(idx);
+    }
+  });
+
+  const parsedItems = [];
+
+  if (matchedLineIndices.length <= 1) {
+    // Single item order (Standard case): assemble all lines into single title
+    let itemSku = '';
+    let itemQty = 1;
+    const titleParts = [];
+
+    for (const line of productSectionLines) {
+      const match = line.match(skuPattern);
       let textPart = line;
-
-      if (skuQtyMatch) {
-        if (!result.sku) result.sku = skuQtyMatch[1];
-        if (!result.quantity || result.quantity === 1) {
-          result.quantity = parseInt(skuQtyMatch[2], 10) || 1;
-        }
-        // Remove the SKU & Qty column from the right end of the line
-        textPart = line.slice(0, line.lastIndexOf(skuQtyMatch[0])).trim();
+      if (match) {
+        if (!itemSku) itemSku = match[1];
+        itemQty = parseInt(match[2], 10) || 1;
+        textPart = line.slice(0, line.lastIndexOf(match[0])).trim();
       }
-
-      // Ignore spurious table headers
       if (textPart && !/^seller\s*sku$/i.test(textPart) && !/^sku$/i.test(textPart) && !/^qty$/i.test(textPart)) {
-        productTitleParts.push(textPart);
+        titleParts.push(textPart);
+      }
+    }
+
+    const assembledTitle = titleParts.join(' ').replace(/\s+/g, ' ').trim();
+    if (!itemSku && assembledTitle) {
+      const commonSkuMatch = assembledTitle.match(/\b([0-9]{1,4}\s*[gGkKmMlL]{1,2})\b/);
+      if (commonSkuMatch) {
+        itemSku = commonSkuMatch[1].replace(/\s+/g, '');
+      }
+    }
+
+    parsedItems.push({
+      product_name: assembledTitle,
+      sku: itemSku,
+      quantity: itemQty,
+    });
+  } else {
+    // Multi-item order: partition lines into items based on matchedLineIndices
+    let prevIndex = 0;
+    matchedLineIndices.forEach((matchIdx) => {
+      const chunk = productSectionLines.slice(prevIndex, matchIdx + 1);
+      prevIndex = matchIdx + 1;
+
+      let itemSku = '';
+      let itemQty = 1;
+      const titleParts = [];
+
+      for (const line of chunk) {
+        const match = line.match(skuPattern);
+        let textPart = line;
+        if (match) {
+          itemSku = match[1];
+          itemQty = parseInt(match[2], 10) || 1;
+          textPart = line.slice(0, line.lastIndexOf(match[0])).trim();
+        }
+        if (textPart && !/^seller\s*sku$/i.test(textPart) && !/^sku$/i.test(textPart) && !/^qty$/i.test(textPart)) {
+          titleParts.push(textPart);
+        }
+      }
+
+      parsedItems.push({
+        product_name: titleParts.join(' ').replace(/\s+/g, ' ').trim(),
+        sku: itemSku,
+        quantity: itemQty,
+      });
+    });
+
+    if (prevIndex < productSectionLines.length) {
+      const remaining = productSectionLines.slice(prevIndex).filter(l => !/^seller\s*sku$/i.test(l) && !/^sku$/i.test(l) && !/^qty$/i.test(l)).join(' ').trim();
+      if (remaining && parsedItems.length > 0) {
+        parsedItems[parsedItems.length - 1].product_name += ' ' + remaining;
       }
     }
   }
 
-  // Assemble all product name lines into a single complete string
-  if (productTitleParts.length > 0) {
-    result.product_name = productTitleParts.join(' ').replace(/\s+/g, ' ').trim();
-  }
-
-  // Check for Qty Total if qty still 1
+  // Check for Qty Total
   const qtyTotalMatch = fullText.match(/Qty\s*Total[\s\:\.\-]+([0-9]+)/i);
-  if (qtyTotalMatch) {
-    result.quantity = parseInt(qtyTotalMatch[1], 10) || result.quantity || 1;
+  const totalQtyFromLabel = qtyTotalMatch ? parseInt(qtyTotalMatch[1], 10) : 0;
+  if (parsedItems.length === 1 && totalQtyFromLabel > 1) {
+    parsedItems[0].quantity = totalQtyFromLabel;
   }
 
-  // Fallback SKU detection from product name if still missing
-  if (!result.sku && result.product_name) {
-    const commonSkuMatch = result.product_name.match(/\b([0-9]{1,4}\s*[gGkKmMlL]{1,2})\b/);
-    if (commonSkuMatch) {
-      result.sku = commonSkuMatch[1].replace(/\s+/g, '');
-    }
+  // Ensure at least one item entry
+  if (parsedItems.length === 0) {
+    parsedItems.push({
+      product_name: '',
+      sku: '',
+      quantity: totalQtyFromLabel || 1,
+    });
   }
+
+  result.items = parsedItems;
+  result.product_name = parsedItems.map(it => it.product_name).filter(Boolean).join(', ') || parsedItems[0]?.product_name || '';
+  result.sku = parsedItems.map(it => `${(it.quantity || 1) > 1 ? `${it.quantity}x ` : ''}${it.sku || ''}`).filter(Boolean).join(' + ') || parsedItems[0]?.sku || '';
+  result.quantity = parsedItems.reduce((sum, it) => sum + (Number(it.quantity) || 1), 0);
 
   return result;
 }

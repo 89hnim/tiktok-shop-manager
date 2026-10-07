@@ -4,6 +4,7 @@
  * handles automatic synchronization and manual export/import.
  */
 import ExcelJS from 'exceljs';
+import { getOrderTotalCogs } from './dbService';
 
 /**
  * Format currency to number / text
@@ -61,8 +62,8 @@ export async function generateWorkbook(orders = [], products = []) {
   // Add order rows
   orders.forEach((ord, idx) => {
     const qty = ord.quantity || 1;
-    const cogsUnit = ord.cogs_snapshot || 0;
-    const totalCogs = cogsUnit * qty;
+    const totalCogs = getOrderTotalCogs(ord);
+    const cogsUnit = qty > 0 ? Math.round(totalCogs / qty) : (ord.cogs_snapshot || 0);
     const isSettled = Boolean(ord.is_settled);
     const settledAmount = ord.settled_amount !== null && ord.settled_amount !== undefined ? Number(ord.settled_amount) : null;
     const actualProfit = settledAmount !== null ? settledAmount - totalCogs : null;
