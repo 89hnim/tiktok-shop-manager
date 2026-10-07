@@ -192,35 +192,6 @@ export default function SettingsModal({
             </div>
           </div>
 
-          {/* Default Platform Fees */}
-          <div className="p-4 bg-slate-850 border border-slate-750 rounded-2xl space-y-3">
-            <span className="font-bold text-white text-sm block">Biểu Phí Sàn TikTok Mặc Định</span>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-slate-300 block mb-1">% Chiết khấu sàn mặc định</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={formData.tiktok_fee_percent_default}
-                  onChange={(e) => setFormData({ ...formData, tiktok_fee_percent_default: Number(e.target.value) })}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono font-bold focus:outline-none focus:border-rose-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-slate-300 block mb-1">Phí cố định mặc định (₫)</label>
-                <input
-                  type="number"
-                  step="500"
-                  value={formData.tiktok_fixed_fee_default}
-                  onChange={(e) => setFormData({ ...formData, tiktok_fixed_fee_default: Number(e.target.value) })}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono font-bold focus:outline-none focus:border-rose-500"
-                />
-              </div>
-            </div>
-          </div>
-
           {/* GitHub Release & Software Updates Box */}
           <div className="p-4 bg-slate-850 border border-slate-750 rounded-2xl space-y-3">
             <div className="flex items-center justify-between">
