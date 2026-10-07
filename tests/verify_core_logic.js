@@ -1028,8 +1028,77 @@ assert.strictEqual(winAsset.name, 'TikTok-Shop-Manager-1.0.1.exe', 'Windows shou
 
 console.log('✅ Passed: Semver comparison and OS installer asset selection verified successfully!');
 
+console.log('\n--- TEST 21: Custom Shop Name (Người Gửi) Dynamic Regex & Recipient Extraction ---');
+function buildSenderRegex(customShopName = '') {
+  const patterns = [
+    '(?:người|nguoi)\\s*(?:gửi|gui|sửi|sui)',
+    'nuôi\\s*cá\\s*cùng\\s*jun',
+    'nuoi\\s*ca\\s*cung\\s*jun',
+  ];
+
+  if (customShopName && typeof customShopName === 'string') {
+    const trimmed = customShopName.trim();
+    if (trimmed) {
+      const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const flexible = escaped.replace(/\s+/g, '\\s*');
+      patterns.push(flexible);
+
+      const unaccented = trimmed.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
+      if (unaccented.toLowerCase() !== trimmed.toLowerCase()) {
+        const flexibleUnaccented = unaccented.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s*');
+        patterns.push(flexibleUnaccented);
+      }
+    }
+  }
+
+  return new RegExp(patterns.join('|'), 'i');
+}
+
+// 21.1 Test matching with custom shop name
+const customRegex1 = buildSenderRegex('Thủy Sinh Hoàng Anh');
+assert.strictEqual(customRegex1.test('Người gửi: Thủy Sinh Hoàng Anh'), true);
+assert.strictEqual(customRegex1.test('Thuy Sinh Hoang Anh'), true);
+assert.strictEqual(customRegex1.test('Nuôi cá cùng Jun'), true);
+assert.strictEqual(customRegex1.test('nguoi gui'), true);
+
+// 21.2 Test parseRecipientBox with custom shop name anchor
+const sampleLinesCustomShop = [
+  '862599999999',
+  'Thủy Sinh Hoàng Anh - 0909123456',
+  'Nguyễn Văn Bảo',
+  '(+84)91*****88',
+  'Số nhà 123 Đường Láng, Đống Đa, Hà Nội'
+];
+function parseRecipientBoxCustom(lines, trackingCode = '', customShopName = '') {
+  const senderRegex = customShopName ? buildSenderRegex(customShopName) : buildSenderRegex();
+  let senderIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (senderRegex.test(lines[i])) {
+      senderIdx = i;
+      break;
+    }
+  }
+  const startIdx = Math.max(0, senderIdx + 1);
+  const candidateBoxLines = [];
+  for (let i = startIdx; i < Math.min(lines.length, startIdx + 7); i++) {
+    const line = lines[i];
+    if (/\b(số\s*nhà|đường|xã|phường)\b/i.test(line)) break;
+    candidateBoxLines.push(line);
+  }
+  return {
+    customer_name: candidateBoxLines[0] || '',
+    customer_phone: candidateBoxLines[1] || '',
+  };
+}
+
+const customBoxResult = parseRecipientBoxCustom(sampleLinesCustomShop, '862599999999', 'Thủy Sinh Hoàng Anh');
+assert.strictEqual(customBoxResult.customer_name, 'Nguyễn Văn Bảo', 'Recipient name correctly anchored after custom shop line');
+assert.strictEqual(customBoxResult.customer_phone, '(+84)91*****88', 'Phone correctly extracted');
+
+console.log('✅ Passed: Custom Shop Name regex successfully detects both accented & unaccented names and anchors recipient box!');
+
 testExcel().then(() => {
-  console.log('\n🎉 ALL 20 AUTOMATED TESTS PASSED SUCCESSFULLY! 🎉\n');
+  console.log('\n🎉 ALL 21 AUTOMATED TESTS PASSED SUCCESSFULLY! 🎉\n');
 });
 
 

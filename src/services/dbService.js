@@ -16,6 +16,8 @@ const DEFAULT_SETTINGS = {
   tiktok_fixed_fee_default: 3000,   // 3,000 VND
   auto_sync_excel: true,
   excel_file_name: 'TikTok_Shop_Orders.xlsx',
+  shop_name: 'Nuôi cá cùng Jun',
+  github_repo: '89hnim/tiktok-shop-manager',
 };
 
 /**

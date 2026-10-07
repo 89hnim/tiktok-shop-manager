@@ -12,7 +12,8 @@ import {
   Sparkles,
   Loader2,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Store
 } from 'lucide-react';
 import { exportToExcelFile } from '../services/excelService';
 
@@ -27,6 +28,7 @@ export default function SettingsModal({
   onTriggerUpdateModal
 }) {
   const [formData, setFormData] = useState({
+    shop_name: settings.shop_name || 'Nuôi cá cùng Jun',
     tiktok_fee_percent_default: settings.tiktok_fee_percent_default ?? 5.0,
     tiktok_fixed_fee_default: settings.tiktok_fixed_fee_default ?? 3000,
     auto_sync_excel: settings.auto_sync_excel ?? true,
@@ -165,6 +167,27 @@ export default function SettingsModal({
                   <span>Đổi Vị Trí</span>
                 </button>
               )}
+            </div>
+          </div>
+
+          {/* Custom Shop Name for OCR */}
+          <div className="p-4 bg-slate-850 border border-slate-750 rounded-2xl space-y-3">
+            <div className="flex items-center gap-2">
+              <Store className="w-4 h-4 text-cyan-400" />
+              <span className="font-bold text-white text-sm">Tên Shop Của Bạn (Người Gửi Đơn Hàng)</span>
+            </div>
+            <p className="text-slate-400 text-[11px] leading-relaxed">
+              Tên Shop được bộ máy OCR sử dụng làm mốc chặn dòng người gửi để định vị chính xác khu vực Tên & SĐT khách hàng bên dưới, tránh quét nhầm thông tin của người gửi.
+            </p>
+            <div>
+              <label className="text-slate-300 block mb-1">Tên Shop / Tên người gửi trên phiếu in:</label>
+              <input
+                type="text"
+                value={formData.shop_name}
+                onChange={(e) => setFormData({ ...formData, shop_name: e.target.value })}
+                placeholder="VD: Nuôi cá cùng Jun"
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-medium text-xs focus:outline-none focus:border-cyan-400"
+              />
             </div>
           </div>
 

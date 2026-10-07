@@ -124,7 +124,7 @@ export default function ScanModal({
       setProgressText(`Đang xử lý ảnh ${i + 1}/${total}: ${file.name || 'Ảnh đơn'}...`);
       setCurrentProgress(Math.round(((i) / total) * 100));
 
-      const ocrResult = await scanOrderImage(file);
+      const ocrResult = await scanOrderImage(file, { shopName: settings?.shop_name });
       const parsed = ocrResult.data || {};
 
       // 1. Fuzzy match product & SKU from catalog

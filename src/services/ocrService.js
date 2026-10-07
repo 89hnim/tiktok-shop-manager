@@ -131,7 +131,33 @@ export function cleanPhone(raw) {
 
 export const VN_SURNAMES = /\b(Nguyễn|Nguyen|Nguyén|Nguyẽn|Trần|Tran|Lê|Le|Phạm|Pham|Hoàng|Hoang|Huỳnh|Huynh|Phan|Vu|Vũ|Vo|Võ|Đặng|Dang|Bùi|Bui|Đỗ|Do|Hồ|Ho|Ngô|Ngo|Dương|Duong|Lý|Ly|Đào|Dao|Đoàn|Doan|Tăng|Tang|Tặng|Lâm|Lam|Phùng|Phung|Mai|Đinh|Dinh|Trịnh|Trinh|Lương|Luong|Thái|Thai|Hà|Ha|Triệu|Trieu)\b/i;
 export const ADDRESS_START_REGEX = /\b(pk\s*răng|số\s*nhà|sn\b|ngõ|nghách|phố|đường|thôn|xã|phường|quận|huyện|tỉnh|sân\s*bay|ấp|khu|tổ\b)\b/i;
-export const SENDER_REGEX = /(?:người|nguoi)\s*(?:gửi|gui|sửi|sui)|nuôi\s*cá\s*cùng\s*jun|nuoi\s*ca\s*cung\s*jun/i;
+
+export function buildSenderRegex(customShopName = '') {
+  const patterns = [
+    '(?:người|nguoi)\\s*(?:gửi|gui|sửi|sui)',
+    'nuôi\\s*cá\\s*cùng\\s*jun',
+    'nuoi\\s*ca\\s*cung\\s*jun',
+  ];
+
+  if (customShopName && typeof customShopName === 'string') {
+    const trimmed = customShopName.trim();
+    if (trimmed) {
+      const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const flexible = escaped.replace(/\s+/g, '\\s*');
+      patterns.push(flexible);
+
+      const unaccented = trimmed.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
+      if (unaccented.toLowerCase() !== trimmed.toLowerCase()) {
+        const flexibleUnaccented = unaccented.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s*');
+        patterns.push(flexibleUnaccented);
+      }
+    }
+  }
+
+  return new RegExp(patterns.join('|'), 'i');
+}
+
+export const SENDER_REGEX = buildSenderRegex('Nuôi cá cùng Jun');
 
 /**
  * Customer Name Cleaner & Reconnector
@@ -202,10 +228,11 @@ export function cleanCustomerName(rawName, nextLine = '') {
 /**
  * Parses Recipient Name & Phone from bounded candidate lines
  */
-export function parseRecipientBox(lines, trackingCode = '') {
+export function parseRecipientBox(lines, trackingCode = '', customShopName = '') {
+  const senderRegex = customShopName ? buildSenderRegex(customShopName) : SENDER_REGEX;
   let senderIdx = -1;
   for (let i = 0; i < lines.length; i++) {
-    if (SENDER_REGEX.test(lines[i])) {
+    if (senderRegex.test(lines[i])) {
       senderIdx = i;
       break;
     }
@@ -279,7 +306,7 @@ export function parseRecipientBox(lines, trackingCode = '') {
 /**
  * Regex Parser tailored for TikTok Shop & J&T Express Shipping Labels
  */
-export function parseTikTokLabelText(fullText) {
+export function parseTikTokLabelText(fullText, options = {}) {
   const result = {
     tracking_code: '',
     order_id: '',
@@ -325,7 +352,8 @@ export function parseTikTokLabelText(fullText) {
   }
 
   // 4. Extract Recipient Name & Phone from Recipient Box
-  const recipInfo = parseRecipientBox(lines, result.tracking_code);
+  const customShop = (typeof options === 'string') ? options : (options.shopName || options.shop_name || '');
+  const recipInfo = parseRecipientBox(lines, result.tracking_code, customShop);
   result.customer_name = recipInfo.customer_name;
   result.customer_phone = recipInfo.customer_phone;
 
@@ -392,7 +420,7 @@ export function parseTikTokLabelText(fullText) {
 /**
  * Main OCR function for an image file / base64
  */
-export async function scanOrderImage(imageFileOrUrl) {
+export async function scanOrderImage(imageFileOrUrl, options = {}) {
   try {
     const { fullUrl, recipientZoneUrl } = await preprocessImage(imageFileOrUrl);
     const worker = await getOCRWorker();
@@ -401,7 +429,7 @@ export async function scanOrderImage(imageFileOrUrl) {
     const fullRes = await worker.recognize(fullUrl);
     const fullText = fullRes.data?.text || '';
 
-    const parsedData = parseTikTokLabelText(fullText);
+    const parsedData = parseTikTokLabelText(fullText, options);
 
     // 2. High-precision Zonal OCR specifically on the Recipient Box (avoids QR code interference)
     if (recipientZoneUrl) {
@@ -409,7 +437,8 @@ export async function scanOrderImage(imageFileOrUrl) {
         const recipRes = await worker.recognize(recipientZoneUrl);
         const recipText = recipRes.data?.text || '';
         const recipLines = recipText.split('\n').map(l => l.trim()).filter(Boolean);
-        const recipData = parseRecipientBox(recipLines, parsedData.tracking_code);
+        const customShop = (typeof options === 'string') ? options : (options.shopName || options.shop_name || '');
+        const recipData = parseRecipientBox(recipLines, parsedData.tracking_code, customShop);
 
         if (recipData.customer_name) {
           parsedData.customer_name = recipData.customer_name;
