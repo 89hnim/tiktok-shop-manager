@@ -292,12 +292,12 @@ export default function ProductModal({
   const curMargin = curExpectedPrice > 0 ? Math.round((curEstProfit / curExpectedPrice) * 100) : 0;
 
   return (
-    <div className="fixed inset-0 z-70 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-3xl w-full max-h-[92vh] overflow-y-auto shadow-2xl p-6 animate-in zoom-in-95 duration-150">
-        {/* Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-rose-500/10 text-rose-400 flex items-center justify-center">
+    <div className="fixed inset-0 z-70 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-150">
+      <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-3xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden min-h-0 my-auto animate-in zoom-in-95 duration-150">
+        {/* Header (Fixed at top) */}
+        <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between shrink-0 bg-slate-900">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-center justify-center">
               <Package className="w-4 h-4" />
             </div>
             <div>
@@ -310,14 +310,16 @@ export default function ProductModal({
             </div>
           </div>
           <button 
+            type="button"
             onClick={onClose}
-            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800"
+            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="mt-4 space-y-5">
+        {/* Scrollable Form Body */}
+        <form id="product-modal-form" onSubmit={handleSubmit} className="p-4 sm:p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
           {/* Product Basic Info & Fees */}
           <div className="p-4 bg-slate-850 border border-slate-750 rounded-2xl space-y-3">
             <div>
@@ -559,25 +561,26 @@ export default function ProductModal({
               </div>
             </div>
           )}
-
-          {/* Action Buttons */}
-          <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800"
-            >
-              Huỷ Bỏ
-            </button>
-            <button
-              type="submit"
-              className="flex items-center gap-2 bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-600 hover:to-pink-700 text-white font-medium px-5 py-2 rounded-xl text-xs shadow-lg shadow-rose-500/25 transition-all"
-            >
-              <Save className="w-3.5 h-3.5" />
-              <span>{productData.id ? 'Lưu Sản Phẩm & Các SKU' : 'Tạo Sản Phẩm & Các SKU'}</span>
-            </button>
-          </div>
         </form>
+
+        {/* Footer (Sticky at Bottom) */}
+        <div className="p-4 border-t border-slate-800 flex items-center justify-end gap-3 shrink-0 bg-slate-950/90">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+          >
+            Huỷ Bỏ
+          </button>
+          <button
+            type="submit"
+            form="product-modal-form"
+            className="flex items-center gap-2 bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-600 hover:to-pink-700 text-white font-medium px-5 py-2 rounded-xl text-xs shadow-lg shadow-rose-500/25 transition-all"
+          >
+            <Save className="w-3.5 h-3.5" />
+            <span>{productData.id ? 'Lưu Sản Phẩm & Các SKU' : 'Tạo Sản Phẩm & Các SKU'}</span>
+          </button>
+        </div>
       </div>
     </div>
   );

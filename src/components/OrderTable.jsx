@@ -19,6 +19,7 @@ import {
   PhoneCall 
 } from 'lucide-react';
 import { getOrderTotalCogs } from '../services/dbService';
+import StatsCards from './StatsCards';
 
 export default function OrderTable({ 
   orders = [], 
@@ -191,8 +192,12 @@ export default function OrderTable({
   };
 
   return (
-    <div className="bg-slate-800/80 border border-slate-700/60 rounded-2xl shadow-xl overflow-hidden backdrop-blur-md">
-      {/* Table Toolbar & Filters */}
+    <div className="space-y-6">
+      {/* Real-time Financial Stats Filtered by Current View */}
+      <StatsCards orders={filteredOrders} />
+
+      <div className="bg-slate-800/80 border border-slate-700/60 rounded-2xl shadow-xl overflow-hidden backdrop-blur-md">
+        {/* Table Toolbar & Filters */}
       <div className="p-4 border-b border-slate-700/60 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
         {/* Search */}
         <div className="relative flex-1 min-w-[240px]">
@@ -568,13 +573,14 @@ export default function OrderTable({
           <span>Tất toán: <strong className="text-emerald-300">{formatMoney(filteredOrders.reduce((sum, o) => sum + (o.settled_amount ? Number(o.settled_amount) : 0), 0))}</strong></span>
         </div>
       </div>
+      </div>
 
       {/* Month & Year Filter Modal */}
       {isMonthPickerOpen && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-md w-full shadow-2xl overflow-hidden max-h-[88vh] flex flex-col animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-md w-full shadow-2xl overflow-hidden max-h-[90vh] flex flex-col min-h-0 my-auto animate-in zoom-in-95 duration-200">
             {/* Header (Fixed) */}
-            <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between shrink-0">
+            <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between shrink-0 bg-slate-900">
               <div className="flex items-center gap-2">
                 <CalendarRange className="w-5 h-5 text-rose-400" />
                 <h3 className="font-bold text-white text-base">Lọc Theo Tháng & Năm</h3>
@@ -582,14 +588,14 @@ export default function OrderTable({
               <button 
                 type="button"
                 onClick={() => setIsMonthPickerOpen(false)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800"
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {/* Scrollable Body */}
-            <div className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1">
+            <div className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1 min-h-0">
               {/* Year Selector with 2 Arrows */}
               <div className="flex items-center justify-between bg-slate-800/90 border border-slate-700 rounded-2xl px-4 py-2.5 shadow-sm">
                 <button
@@ -631,7 +637,7 @@ export default function OrderTable({
                         key={m}
                         type="button"
                         onClick={() => handleSelectMonth(m, pickerYear)}
-                        className={`py-2.5 sm:py-3 px-2 rounded-xl text-xs font-bold transition-all flex flex-col items-center justify-center gap-0.5 border ${
+                        className={`py-2 sm:py-2.5 px-2 rounded-xl text-xs font-bold transition-all flex flex-col items-center justify-center gap-0.5 border ${
                           isSelected
                             ? 'bg-rose-500 text-white border-rose-400 shadow-lg shadow-rose-500/30 ring-1 ring-rose-400'
                             : isCurrentMonthNow
@@ -666,51 +672,62 @@ export default function OrderTable({
                   Xem Tất Cả
                 </button>
               </div>
-            </div>
 
-            {/* Custom Day Range Toggle */}
-            <div className="border-t border-slate-800 pt-3">
-              <button
-                type="button"
-                onClick={() => setShowAdvancedDateInputs(prev => !prev)}
-                className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center justify-between w-full"
-              >
-                <span>Khoảng ngày cụ thể (Từ ngày - Đến ngày)</span>
-                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showAdvancedDateInputs ? 'rotate-180' : ''}`} />
-              </button>
+              {/* Custom Day Range Toggle - Inside Scrollable Body */}
+              <div className="border-t border-slate-800/80 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedDateInputs(prev => !prev)}
+                  className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center justify-between w-full"
+                >
+                  <span>Khoảng ngày cụ thể (Từ ngày - Đến ngày)</span>
+                  <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showAdvancedDateInputs ? 'rotate-180' : ''}`} />
+                </button>
 
-              {showAdvancedDateInputs && (
-                <div className="mt-2.5 p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-2 text-xs">
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[10px] text-slate-400 block mb-1">Từ ngày:</label>
-                      <input
-                        type="date"
-                        value={customStartDate}
-                        onChange={(e) => {
-                          setCustomStartDate(e.target.value);
-                          setDateFilter('custom');
-                          setActivePeriodLabel('Tùy chỉnh ngày');
-                        }}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-slate-200 focus:outline-none focus:border-rose-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-slate-400 block mb-1">Đến ngày:</label>
-                      <input
-                        type="date"
-                        value={customEndDate}
-                        onChange={(e) => {
-                          setCustomEndDate(e.target.value);
-                          setDateFilter('custom');
-                          setActivePeriodLabel('Tùy chỉnh ngày');
-                        }}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-slate-200 focus:outline-none focus:border-rose-500"
-                      />
+                {showAdvancedDateInputs && (
+                  <div className="mt-2.5 p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-2 text-xs">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] text-slate-400 block mb-1">Từ ngày:</label>
+                        <input
+                          type="date"
+                          value={customStartDate}
+                          onChange={(e) => {
+                            setCustomStartDate(e.target.value);
+                            setDateFilter('custom');
+                            setActivePeriodLabel('Tùy chỉnh ngày');
+                          }}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-slate-200 focus:outline-none focus:border-rose-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-slate-400 block mb-1">Đến ngày:</label>
+                        <input
+                          type="date"
+                          value={customEndDate}
+                          onChange={(e) => {
+                            setCustomEndDate(e.target.value);
+                            setDateFilter('custom');
+                            setActivePeriodLabel('Tùy chỉnh ngày');
+                          }}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-slate-200 focus:outline-none focus:border-rose-500"
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
+            </div>
+
+            {/* Sticky Footer */}
+            <div className="p-3 bg-slate-950/90 border-t border-slate-800 flex justify-end shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsMonthPickerOpen(false)}
+                className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-xl text-xs font-semibold transition-colors"
+              >
+                Đóng
+              </button>
             </div>
           </div>
         </div>

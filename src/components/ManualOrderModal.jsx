@@ -322,9 +322,6 @@ export default function ManualOrderModal({
                 <p className="text-rose-300/90 mt-1 leading-relaxed">
                   {duplicateInfo.reason}
                 </p>
-                <p className="text-rose-400 font-semibold mt-1.5 text-[11px]">
-                  👉 Nút "Tạo Đơn Hàng" đã bị khóa để bảo vệ dữ liệu tránh bị trùng lặp.
-                </p>
               </div>
             </div>
           )}

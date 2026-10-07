@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import Header from './components/Header';
-import StatsCards from './components/StatsCards';
 import OrderTable from './components/OrderTable';
 import ProductManager from './components/ProductManager';
 import ScanModal from './components/ScanModal';
@@ -197,10 +196,7 @@ export default function App() {
         <ErrorBoundary onOpenErrorLog={() => setIsErrorLogOpen(true)}>
           {activeTab === 'orders' ? (
             <div>
-              {/* Real-time Financial Stats */}
-              <StatsCards orders={orders} />
-
-              {/* Excel-like Spreadsheet Data Grid */}
+              {/* Excel-like Spreadsheet Data Grid with Integrated Filtered Stats */}
               <OrderTable
                 orders={orders}
                 onUpdateOrder={handleUpdateOrder}
