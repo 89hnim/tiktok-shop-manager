@@ -1,0 +1,78 @@
+# ==========================================
+# Personal & Customer Data (Bảo mật thông tin đơn hàng và khách hàng)
+# ==========================================
+photo_*
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.heic
+*.pdf
+*.xlsx
+*.xls
+*.csv
+orders_export*
+
+# ==========================================
+# Databases & Storage
+# ==========================================
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# ==========================================
+# Secrets & Environments
+# ==========================================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.cert
+
+# ==========================================
+# Dependencies
+# ==========================================
+node_modules/
+.pnp
+.pnp.js
+
+# ==========================================
+# Build & Distribution Artifacts
+# ==========================================
+dist/
+dist-electron/
+release/
+build/
+out/
+
+# Large OCR Models
+*.traineddata
+
+# ==========================================
+# Logs & Temp Files
+# ==========================================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ==========================================
+# System & Editor
+# ==========================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
