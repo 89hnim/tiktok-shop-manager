@@ -247,6 +247,7 @@ export default function App() {
             setEditingOrder(null);
           }}
           products={products}
+          orders={orders}
           initialOrder={editingOrder}
           onCreateOrder={handleCreateOrder}
           onUpdateOrder={handleUpdateOrderWithSnapshot}

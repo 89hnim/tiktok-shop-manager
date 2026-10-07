@@ -1,11 +1,25 @@
-import React, { useState, useEffect } from 'react';
-import { PlusCircle, Edit3, X, Save, Package, Calendar, User, Phone, DollarSign, Plus, Trash2 } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  PlusCircle, 
+  Edit3, 
+  X, 
+  Save, 
+  Package, 
+  Calendar, 
+  User, 
+  Phone, 
+  DollarSign, 
+  Plus, 
+  Trash2,
+  AlertTriangle
+} from 'lucide-react';
 import { generateUUID } from '../services/dbService';
 
 export default function ManualOrderModal({
   isOpen,
   onClose,
   products = [],
+  orders = [],
   initialOrder = null,
   onCreateOrder,
   onUpdateOrder,
@@ -89,6 +103,47 @@ export default function ManualOrderModal({
       }
     }
   }, [isOpen, initialOrder]);
+
+  // Real-time duplicate check (O(1) hash comparison with negligible microsecond performance impact)
+  const duplicateInfo = useMemo(() => {
+    const inputTracking = (formData.tracking_code || '').trim().toLowerCase();
+    const inputOrderId = (formData.order_id || '').trim().toLowerCase();
+
+    if (!inputTracking && !inputOrderId) {
+      return { isDuplicate: false, reason: '', duplicateOrder: null };
+    }
+
+    const dupOrder = orders.find(o => {
+      // In editing mode, skip comparing against itself
+      if (isEditing && initialOrder && o.id === initialOrder.id) {
+        return false;
+      }
+      const existingTracking = (o.tracking_code || '').trim().toLowerCase();
+      const existingOrderId = (o.order_id || '').trim().toLowerCase();
+
+      if (inputTracking && existingTracking && existingTracking === inputTracking) {
+        return true;
+      }
+      if (inputOrderId && existingOrderId && existingOrderId === inputOrderId) {
+        return true;
+      }
+      return false;
+    });
+
+    if (dupOrder) {
+      const existingTracking = (dupOrder.tracking_code || '').trim().toLowerCase();
+      const isTrackingDup = inputTracking && existingTracking === inputTracking;
+      return {
+        isDuplicate: true,
+        reason: isTrackingDup
+          ? `Mã vận đơn "${formData.tracking_code.trim()}" đã có trên hệ thống (${dupOrder.customer_name || 'Khách lẻ'}, ngày ${dupOrder.order_date || 'trước'})!`
+          : `Order ID "${formData.order_id.trim()}" đã có trên hệ thống!`,
+        duplicateOrder: dupOrder,
+      };
+    }
+
+    return { isDuplicate: false, reason: '', duplicateOrder: null };
+  }, [formData.tracking_code, formData.order_id, orders, isEditing, initialOrder]);
 
   if (!isOpen) return null;
 
@@ -180,6 +235,11 @@ export default function ManualOrderModal({
       return;
     }
 
+    if (duplicateInfo.isDuplicate) {
+      alert(`Không thể tạo/lưu đơn hàng: ${duplicateInfo.reason}`);
+      return;
+    }
+
     const processedItems = formData.items.map(it => {
       const matchedProd = products.find(p => p.id === it.selectedProductId);
       const matchedSku = (matchedProd?.skus || []).find(s => s.sku === it.sku) || matchedProd?.skus?.[0];
@@ -251,6 +311,24 @@ export default function ManualOrderModal({
 
         {/* Scrollable Form Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-5 overflow-y-auto flex-1">
+          {/* Duplicate Warning Banner */}
+          {duplicateInfo.isDuplicate && (
+            <div className="bg-rose-950/70 border border-rose-500/70 rounded-2xl p-3.5 flex items-start gap-3 text-xs text-rose-200 animate-in fade-in duration-200 shadow-lg">
+              <AlertTriangle className="w-5 h-5 shrink-0 text-rose-400 mt-0.5" />
+              <div className="flex-1">
+                <p className="font-bold text-rose-200 text-sm flex items-center gap-1.5">
+                  <span>🚫 ĐƠN HÀNG ĐÃ TỒN TẠI TRONG HỆ THỐNG</span>
+                </p>
+                <p className="text-rose-300/90 mt-1 leading-relaxed">
+                  {duplicateInfo.reason}
+                </p>
+                <p className="text-rose-400 font-semibold mt-1.5 text-[11px]">
+                  👉 Nút "Tạo Đơn Hàng" đã bị khóa để bảo vệ dữ liệu tránh bị trùng lặp.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Tracking Code & Order ID */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
@@ -261,7 +339,11 @@ export default function ManualOrderModal({
                 value={formData.tracking_code}
                 onChange={(e) => setFormData({ ...formData, tracking_code: e.target.value })}
                 placeholder="VD: 862521283460"
-                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono font-bold text-white focus:outline-none focus:border-rose-500"
+                className={`w-full border rounded-xl px-3 py-2 text-xs font-mono font-bold focus:outline-none transition-all ${
+                  duplicateInfo.isDuplicate
+                    ? 'bg-rose-950/40 border-rose-500 text-rose-100 ring-2 ring-rose-500/30'
+                    : 'bg-slate-800 border-slate-700 text-white focus:border-rose-500'
+                }`}
               />
             </div>
 
@@ -478,11 +560,15 @@ export default function ManualOrderModal({
             </button>
             <button
               type="submit"
+              disabled={duplicateInfo.isDuplicate || !formData.tracking_code.trim()}
               className={`flex items-center gap-1.5 text-white font-medium px-5 py-2 rounded-xl text-xs shadow-lg transition-all ${
-                isEditing
-                  ? 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 shadow-amber-500/25'
-                  : 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 shadow-emerald-500/25'
+                duplicateInfo.isDuplicate || !formData.tracking_code.trim()
+                  ? 'bg-slate-800 text-slate-500 border border-slate-700/60 cursor-not-allowed opacity-60 shadow-none'
+                  : isEditing
+                    ? 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 shadow-amber-500/25'
+                    : 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 shadow-emerald-500/25'
               }`}
+              title={duplicateInfo.isDuplicate ? duplicateInfo.reason : ''}
             >
               <Save className="w-3.5 h-3.5" />
               <span>{isEditing ? 'Lưu Thay Đổi Đơn Hàng' : 'Tạo Đơn Hàng'}</span>

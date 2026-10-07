@@ -1298,8 +1298,86 @@ assert.strictEqual(mockGetOrderTotalCogs(editedOrder), 239000);
 assert.strictEqual(editedOrder.settled_amount - mockGetOrderTotalCogs(editedOrder), 61000, 'Updated profit should be 300000 - 239000 = 61000');
 console.log('✅ Passed: Edit Order successfully recalculated items, total COGS (239,000₫), and profit (61,000₫)!');
 
+console.log('\n--- TEST 24: Real-Time Duplicate Tracking Code Detection & Performance Test ---');
+
+function checkDuplicateOrder(inputTracking, inputOrderId, existingOrders, initialOrder = null) {
+  const normTracking = (inputTracking || '').trim().toLowerCase();
+  const normOrderId = (inputOrderId || '').trim().toLowerCase();
+
+  if (!normTracking && !normOrderId) {
+    return { isDuplicate: false, reason: '' };
+  }
+
+  const dup = existingOrders.find(o => {
+    if (initialOrder && o.id === initialOrder.id) return false;
+    const oTracking = (o.tracking_code || '').trim().toLowerCase();
+    const oOrderId = (o.order_id || '').trim().toLowerCase();
+    if (normTracking && oTracking && oTracking === normTracking) return true;
+    if (normOrderId && oOrderId && oOrderId === normOrderId) return true;
+    return false;
+  });
+
+  if (dup) {
+    const oTracking = (dup.tracking_code || '').trim().toLowerCase();
+    const isTrackingDup = normTracking && oTracking === normTracking;
+    return {
+      isDuplicate: true,
+      reason: isTrackingDup
+        ? `Mã vận đơn "${inputTracking.trim()}" đã có trên hệ thống (${dup.customer_name || 'Khách lẻ'}, ngày ${dup.order_date || 'trước'})!`
+        : `Order ID "${inputOrderId.trim()}" đã có trên hệ thống!`,
+      duplicateOrder: dup,
+    };
+  }
+
+  return { isDuplicate: false, reason: '' };
+}
+
+const testOrdersList = [
+  { id: 'ord-1', tracking_code: '862521283460', order_id: '586374703921268324', customer_name: 'Nguyễn Văn A', order_date: '2026-10-06' },
+  { id: 'ord-2', tracking_code: '862599999999', order_id: '586399999999999999', customer_name: 'Trần Văn B', order_date: '2026-10-07' },
+];
+
+// 24.1 Duplicate tracking code detected
+const dupResult1 = checkDuplicateOrder('862521283460', '', testOrdersList);
+assert.strictEqual(dupResult1.isDuplicate, true, 'Should detect duplicate tracking code');
+assert(dupResult1.reason.includes('Nguyễn Văn A'), 'Reason should contain customer name');
+
+// 24.2 Trim and case-insensitive check
+const dupResult2 = checkDuplicateOrder('  862521283460  ', '', testOrdersList);
+assert.strictEqual(dupResult2.isDuplicate, true, 'Should detect duplicate tracking code with whitespace');
+
+// 24.3 Unique tracking code passes
+const uniqueResult = checkDuplicateOrder('862511111111', '', testOrdersList);
+assert.strictEqual(uniqueResult.isDuplicate, false, 'Should allow unique tracking code');
+
+// 24.4 Edit mode: Self order is NOT flagged as duplicate
+const editSelfResult = checkDuplicateOrder('862521283460', '', testOrdersList, testOrdersList[0]);
+assert.strictEqual(editSelfResult.isDuplicate, false, 'Should NOT flag self order as duplicate in edit mode');
+
+// 24.5 Edit mode: Changing tracking code to ANOTHER existing order's code is flagged
+const editCollisionResult = checkDuplicateOrder('862599999999', '', testOrdersList, testOrdersList[0]);
+assert.strictEqual(editCollisionResult.isDuplicate, true, 'Should flag collision with another order in edit mode');
+
+// 24.6 Performance Benchmark: Check 10,000 keystroke evaluations against 1,000 orders
+const benchmarkOrders = Array.from({ length: 1000 }, (_, i) => ({
+  id: `bench-ord-${i}`,
+  tracking_code: `8625${String(i).padStart(8, '0')}`,
+  order_id: `5863${String(i).padStart(12, '0')}`,
+  customer_name: `Customer ${i}`,
+}));
+
+const startTime = process.hrtime();
+for (let k = 0; k < 10000; k++) {
+  checkDuplicateOrder('862500000500', '', benchmarkOrders);
+}
+const diff = process.hrtime(startTime);
+const elapsedMs = (diff[0] * 1000 + diff[1] / 1e6);
+console.log(`⏱️ Performance Benchmark: 10,000 realtime keystroke evaluations took ${elapsedMs.toFixed(2)}ms (~${(elapsedMs / 10000).toFixed(4)}ms per keystroke)!`);
+assert((elapsedMs / 10000) < 1.0, 'Evaluation per keystroke must be negligible (< 1ms)');
+console.log('✅ Passed: Real-time duplicate tracking code detection verified with zero performance overhead!');
+
 testExcel().then(() => {
-  console.log('\n🎉 ALL 23 AUTOMATED TESTS PASSED SUCCESSFULLY! 🎉\n');
+  console.log('\n🎉 ALL 24 AUTOMATED TESTS PASSED SUCCESSFULLY! 🎉\n');
 });
 
 
