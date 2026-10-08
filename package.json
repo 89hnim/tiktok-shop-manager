@@ -9,6 +9,7 @@
     "build": "vite build && electron-builder",
     "build:mac": "vite build && electron-builder --mac",
     "build:win": "vite build && electron-builder --win",
+    "build:win:zip": "vite build && electron-builder --win zip --x64 -c.win.signAndEditExecutable=false",
     "start": "electron ."
   },
   "dependencies": {
