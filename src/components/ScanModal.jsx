@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
   Camera, 
   Upload, 
@@ -19,9 +19,15 @@ import {
   Percent,
   Save,
   AlertTriangle,
-  ZoomIn
+  ZoomIn,
+  Clock,
+  StopCircle,
+  Zap,
+  ShieldCheck,
+  KeyRound
 } from 'lucide-react';
 import { scanOrderImage } from '../services/ocrService';
+import { scanOrderWithGemini } from '../services/geminiService';
 import { 
   generateUUID, 
   findSkuVariant, 
@@ -47,6 +53,12 @@ export default function ScanModal({
   const [progressText, setProgressText] = useState('');
   const [currentProgress, setCurrentProgress] = useState(0);
   const [zoomImageUrl, setZoomImageUrl] = useState(null);
+
+  // Batch Scanning State (Option 1)
+  const [batchItems, setBatchItems] = useState([]);
+  const [estimatedSecondsLeft, setEstimatedSecondsLeft] = useState(0);
+  const [engineUsedText, setEngineUsedText] = useState('');
+  const abortScanRef = useRef(false);
 
   // Unified Product Modal state (dùng chung cho cả Tạo mới SP & Cập nhật SKU thiếu)
   const [productModalConfig, setProductModalConfig] = useState({
@@ -114,76 +126,171 @@ export default function ScanModal({
     });
   };
 
-  // Handle files selected via file input or drag-drop
-  const handleFilesSelected = async (files) => {
-    if (!files || files.length === 0) return;
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-    setIsProcessing(true);
-    const newItems = [];
+  const formatCountdown = (totalSec) => {
+    if (!totalSec || totalSec <= 0) return 'Vài giây';
+    const m = Math.floor(totalSec / 60);
+    const s = Math.round(totalSec % 60);
+    if (m > 0) return `${m}p ${s > 0 ? `${s}s` : ''}`;
+    return `${s}s`;
+  };
+
+  const handleStopScan = () => {
+    abortScanRef.current = true;
+    setProgressText('Đang dừng tiến trình quét...');
+  };
+
+  // Handle files selected via file input or drag-drop
+  const handleFilesSelected = async (filesList) => {
+    if (!filesList || filesList.length === 0) return;
+    const files = Array.from(filesList);
     const total = files.length;
 
+    abortScanRef.current = false;
+    setIsProcessing(true);
+
+    const isGeminiEngine = (settings?.ocr_engine || 'gemini') === 'gemini';
+    const hasGeminiKey = Boolean(settings?.gemini_api_key?.trim());
+    const willUseGemini = isGeminiEngine && hasGeminiKey;
+
+    setEngineUsedText(
+      willUseGemini 
+        ? 'Google Gemini AI (14 ảnh/phút - Free Tier an toàn)'
+        : (isGeminiEngine && !hasGeminiKey)
+        ? 'Tesseract Offline (Tự động fallback do chưa nhập API Key)'
+        : 'Tesseract OCR (Ngoại tuyến)'
+    );
+
+    const initialBatch = files.map((file, idx) => ({
+      id: generateUUID(),
+      file,
+      name: file.name || `Phiếu in #${idx + 1}`,
+      previewUrl: typeof file === 'string' ? file : URL.createObjectURL(file),
+      status: 'pending',
+      errorMsg: '',
+    }));
+    setBatchItems(initialBatch);
+
+    const newItems = [];
+    const GEMINI_PACE_MS = 4200; // Rate limit pacing for 15 RPM
+
     for (let i = 0; i < total; i++) {
+      if (abortScanRef.current) break;
+
       const file = files[i];
-      setProgressText(`Đang xử lý ảnh ${i + 1}/${total}: ${file.name || 'Ảnh đơn'}...`);
+      const batchId = initialBatch[i].id;
+
+      setBatchItems(prev => prev.map(b => b.id === batchId ? { ...b, status: 'processing' } : b));
+      setProgressText(`Đang xử lý ${i + 1}/${total}: ${file.name || 'Ảnh đơn'}...`);
       setCurrentProgress(Math.round(((i) / total) * 100));
 
-      const ocrResult = await scanOrderImage(file, { shopName: settings?.shop_name });
-      const parsed = ocrResult.data || {};
+      const secPerItem = willUseGemini ? 4.2 : 2.5;
+      setEstimatedSecondsLeft(Math.max(1, Math.round((total - i) * secPerItem)));
 
-      // Parse all items from label text
-      const rawParsedItems = Array.isArray(parsed.items) && parsed.items.length > 0
-        ? parsed.items
-        : [{
-            product_name: parsed.product_name || '',
-            sku: parsed.sku || '',
-            quantity: parsed.quantity || 1
-          }];
+      const startT = Date.now();
+      let ocrResult = null;
 
-      const processedItems = rawParsedItems.map(rawIt => {
-        let matchedProd = null;
-        let matchedSku = null;
+      if (willUseGemini) {
+        let attempts = 0;
+        const maxAttempts = 3;
+        while (attempts < maxAttempts && !abortScanRef.current) {
+          attempts++;
+          ocrResult = await scanOrderWithGemini(file, {
+            apiKey: settings.gemini_api_key,
+            shopName: settings.shop_name,
+          });
 
-        const fuzzyMatch = findBestProductMatch(displayProducts, rawIt.product_name, rawIt.sku);
-        if (fuzzyMatch) {
-          matchedProd = fuzzyMatch.product;
-          const normOcrSku = rawIt.sku ? rawIt.sku.toLowerCase().trim() : '';
-          const exactSku = (matchedProd.skus || []).find(s => (s.sku || '').toLowerCase().trim() === normOcrSku);
-          if (exactSku) {
-            matchedSku = exactSku;
+          if (ocrResult && ocrResult.isRateLimited) {
+            const waitSec = ocrResult.retryAfter || 10;
+            for (let w = waitSec; w > 0; w--) {
+              if (abortScanRef.current) break;
+              setProgressText(`Tạm dừng tránh vượt hạn mức 15 req/phút: chờ ${w}s để thử lại...`);
+              await sleep(1000);
+            }
+            continue;
           }
-        } else if (rawIt.sku) {
-          const found = findSkuVariant(displayProducts, rawIt.sku);
-          if (found) {
-            matchedProd = found.product;
-            matchedSku = found.skuVariant;
-          }
+          break;
         }
+      } else {
+        ocrResult = await scanOrderImage(file, { shopName: settings?.shop_name });
+      }
 
-        return {
-          id: generateUUID(),
-          selectedProductId: matchedProd ? matchedProd.id : '',
-          product_name: rawIt.product_name || (matchedProd ? matchedProd.name : ''),
-          sku: rawIt.sku || (matchedSku ? matchedSku.sku : ''),
-          quantity: Math.max(1, Number(rawIt.quantity) || 1),
-        };
-      });
+      if (!ocrResult || !ocrResult.success) {
+        setBatchItems(prev => prev.map(b => b.id === batchId ? { 
+          ...b, 
+          status: 'error', 
+          errorMsg: ocrResult?.error || 'Không nhận diện được' 
+        } : b));
+      } else {
+        setBatchItems(prev => prev.map(b => b.id === batchId ? { ...b, status: 'done' } : b));
 
-      newItems.push({
-        tempId: generateUUID(),
-        file,
-        previewUrl: ocrResult.previewUrl || (typeof file === 'string' ? file : URL.createObjectURL(file)),
-        success: ocrResult.success,
-        tracking_code: parsed.tracking_code || '',
-        order_id: parsed.order_id || '',
-        order_date: parsed.order_date || '',
-        customer_name: parsed.customer_name || '',
-        customer_phone: parsed.customer_phone || '',
-        items: processedItems,
-      });
+        const parsed = ocrResult.data || {};
+        const rawParsedItems = Array.isArray(parsed.items) && parsed.items.length > 0
+          ? parsed.items
+          : [{
+              product_name: parsed.product_name || '',
+              sku: parsed.sku || '',
+              quantity: parsed.quantity || 1
+            }];
+
+        const processedItems = rawParsedItems.map(rawIt => {
+          let matchedProd = null;
+          let matchedSku = null;
+
+          const fuzzyMatch = findBestProductMatch(displayProducts, rawIt.product_name, rawIt.sku);
+          if (fuzzyMatch) {
+            matchedProd = fuzzyMatch.product;
+            const normOcrSku = rawIt.sku ? rawIt.sku.toLowerCase().trim() : '';
+            const exactSku = (matchedProd.skus || []).find(s => (s.sku || '').toLowerCase().trim() === normOcrSku);
+            if (exactSku) {
+              matchedSku = exactSku;
+            }
+          } else if (rawIt.sku) {
+            const found = findSkuVariant(displayProducts, rawIt.sku);
+            if (found) {
+              matchedProd = found.product;
+              matchedSku = found.skuVariant;
+            }
+          }
+
+          return {
+            id: generateUUID(),
+            selectedProductId: matchedProd ? matchedProd.id : '',
+            product_name: rawIt.product_name || (matchedProd ? matchedProd.name : ''),
+            sku: rawIt.sku || (matchedSku ? matchedSku.sku : ''),
+            quantity: Math.max(1, Number(rawIt.quantity) || 1),
+          };
+        });
+
+        newItems.push({
+          tempId: generateUUID(),
+          file,
+          previewUrl: ocrResult.previewUrl || initialBatch[i].previewUrl,
+          success: true,
+          tracking_code: parsed.tracking_code || '',
+          order_id: parsed.order_id || '',
+          order_date: parsed.order_date || '',
+          customer_name: parsed.customer_name || '',
+          customer_phone: parsed.customer_phone || '',
+          items: processedItems,
+        });
+      }
+
+      // Pacing for Gemini
+      if (willUseGemini && i < total - 1 && !abortScanRef.current) {
+        const elapsed = Date.now() - startT;
+        if (elapsed < GEMINI_PACE_MS) {
+          await sleep(GEMINI_PACE_MS - elapsed);
+        }
+      }
     }
 
     setCurrentProgress(100);
+    setEstimatedSecondsLeft(0);
     setProgressText('Hoàn thành quét toàn bộ ảnh!');
+    await sleep(350);
+
     setImagesQueue(prev => [...prev, ...newItems]);
     setIsProcessing(false);
   };
@@ -477,7 +584,20 @@ export default function ScanModal({
               <Camera className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-bold text-lg text-white">Quét Ảnh Đơn Hàng TikTok (OCR Offline)</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-lg text-white">Quét Nhãn Đơn Hàng TikTok</h3>
+                {settings?.ocr_engine === 'gemini' && settings?.gemini_api_key ? (
+                  <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1">
+                    <Zap className="w-3 h-3 text-emerald-400" />
+                    <span>Gemini AI Cloud (Free)</span>
+                  </span>
+                ) : (
+                  <span className="bg-slate-800 text-slate-400 border border-slate-700 text-[10px] px-2.5 py-0.5 rounded-full font-medium flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3 text-slate-400" />
+                    <span>Tesseract Offline</span>
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-slate-400">
                 Tự động bóc tách đơn 1 hoặc nhiều sản phẩm / SKU, mã vận đơn, người nhận & SĐT
               </p>
@@ -494,46 +614,181 @@ export default function ScanModal({
 
         {/* Modal Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* Upload Area */}
-          <div className="border-2 border-dashed border-slate-750 hover:border-rose-500/50 bg-slate-850/50 rounded-2xl p-6 text-center transition-colors">
-            <input
-              type="file"
-              id="file-upload"
-              multiple
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => handleFilesSelected(e.target.files)}
-            />
-            <label htmlFor="file-upload" className="cursor-pointer block space-y-3">
-              <div className="w-12 h-12 rounded-2xl bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-center justify-center mx-auto">
-                <Upload className="w-6 h-6" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-slate-200">
-                  Kéo thả nhiều ảnh phiếu in hoặc <span className="text-rose-400 underline underline-offset-2">bấm để chọn ảnh</span>
-                </p>
-                <p className="text-xs text-slate-500 mt-1">Hỗ trợ JPG, PNG, ảnh chụp màn hình TikTok Seller (đơn 1 món hoặc nhiều món)</p>
-              </div>
-            </label>
-          </div>
+          {/* OPTION 1: BATCH SCANNING MONITOR (when isProcessing === true) */}
+          {isProcessing ? (
+            <div className="space-y-5 animate-in fade-in duration-200">
+              {/* Progress Summary Card */}
+              <div className="bg-slate-850 border border-slate-750 rounded-3xl p-5 shadow-xl space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-rose-500/20 to-pink-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0 shadow-inner">
+                      <Loader2 className="w-6 h-6 animate-spin text-rose-400" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-white text-base flex items-center gap-2">
+                        <span>Đang Quét & Bóc Tách Hàng Đợt</span>
+                        <span className="font-mono text-xs bg-rose-500/20 text-rose-300 border border-rose-500/30 px-2 py-0.5 rounded-full">
+                          {batchItems.filter(b => b.status === 'done').length}/{batchItems.length} ảnh
+                        </span>
+                      </h4>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        {engineUsedText}
+                      </p>
+                    </div>
+                  </div>
 
-          {/* Progress Indicator */}
-          {isProcessing && (
-            <div className="p-4 bg-slate-800/80 border border-slate-700 rounded-2xl space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-300 font-medium flex items-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin text-rose-500" />
-                  <span>{progressText}</span>
-                </span>
-                <span className="font-mono font-bold text-rose-400">{currentProgress}%</span>
+                  <button
+                    type="button"
+                    onClick={handleStopScan}
+                    className="flex items-center gap-1.5 self-start sm:self-auto bg-slate-800 hover:bg-slate-700 text-rose-300 border border-slate-700 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all shadow-sm"
+                  >
+                    <StopCircle className="w-3.5 h-3.5" />
+                    <span>Dừng Quét</span>
+                  </button>
+                </div>
+
+                {/* Animated Progress Bar */}
+                <div className="space-y-2 pt-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-300 font-medium truncate pr-2">{progressText}</span>
+                    <span className="font-mono font-bold text-rose-400 shrink-0">{currentProgress}%</span>
+                  </div>
+                  <div className="w-full bg-slate-900 rounded-full h-3 overflow-hidden border border-slate-800/80 p-0.5">
+                    <div 
+                      className="bg-gradient-to-r from-rose-500 via-pink-500 to-rose-400 h-full rounded-full transition-all duration-300 shadow-sm"
+                      style={{ width: `${currentProgress}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Real-time KPI Metric Badges */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-800 text-xs font-mono">
+                  <div className="bg-slate-900/90 p-2.5 rounded-2xl border border-slate-800">
+                    <span className="text-slate-500 block text-[10px] uppercase font-sans">Thời gian còn lại</span>
+                    <span className="font-bold text-cyan-300 text-xs flex items-center gap-1.5 mt-0.5">
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>~{formatCountdown(estimatedSecondsLeft)}</span>
+                    </span>
+                  </div>
+                  <div className="bg-slate-900/90 p-2.5 rounded-2xl border border-slate-800">
+                    <span className="text-slate-500 block text-[10px] uppercase font-sans">Tốc độ điều tiết</span>
+                    <span className="font-bold text-amber-300 text-xs flex items-center gap-1.5 mt-0.5">
+                      <Zap className="w-3.5 h-3.5" />
+                      <span>14 ảnh / phút (Free Tier)</span>
+                    </span>
+                  </div>
+                  <div className="bg-slate-900/90 p-2.5 rounded-2xl border border-slate-800 col-span-2 sm:col-span-1">
+                    <span className="text-slate-500 block text-[10px] uppercase font-sans">Chế độ bảo vệ</span>
+                    <span className="font-bold text-emerald-400 text-xs flex items-center gap-1.5 mt-0.5 font-sans">
+                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                      <span>Chống xung đột dữ liệu</span>
+                    </span>
+                  </div>
+                </div>
               </div>
-              <div className="w-full bg-slate-900 rounded-full h-2 overflow-hidden">
-                <div 
-                  className="bg-gradient-to-r from-rose-500 to-pink-500 h-full rounded-full transition-all duration-300"
-                  style={{ width: `${currentProgress}%` }}
-                />
+
+              {/* Batch Items Live Progress Visual Grid */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                  <span className="font-semibold text-slate-300">
+                    Tiến trình chi tiết ({batchItems.length} ảnh):
+                  </span>
+                  <span className="text-[11px] text-slate-400">
+                    Sau khi quét xong trọn bộ, màn hình sẽ mở toàn quyền xem và sửa
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3 max-h-[380px] overflow-y-auto p-1">
+                  {batchItems.map((bItem, idx) => (
+                    <div 
+                      key={bItem.id}
+                      className={`relative rounded-2xl border p-2 flex flex-col items-center text-center gap-1.5 transition-all ${
+                        bItem.status === 'processing'
+                          ? 'bg-rose-500/10 border-rose-500/80 shadow-lg ring-1 ring-rose-500/40'
+                          : bItem.status === 'done'
+                          ? 'bg-slate-850 border-emerald-500/40'
+                          : bItem.status === 'error'
+                          ? 'bg-slate-850 border-rose-500/40'
+                          : 'bg-slate-850/60 border-slate-800 opacity-60'
+                      }`}
+                    >
+                      {/* Image Thumbnail */}
+                      <div className="w-full h-20 rounded-xl overflow-hidden bg-slate-950 border border-slate-800 relative">
+                        <img 
+                          src={bItem.previewUrl} 
+                          alt={bItem.name} 
+                          className="w-full h-full object-cover" 
+                        />
+                        <div className="absolute top-1 right-1">
+                          {bItem.status === 'done' && (
+                            <span className="bg-emerald-500 text-white rounded-full p-1 shadow flex items-center justify-center">
+                              <Check className="w-2.5 h-2.5" />
+                            </span>
+                          )}
+                          {bItem.status === 'processing' && (
+                            <span className="bg-rose-500 text-white rounded-full p-1 shadow animate-pulse flex items-center justify-center">
+                              <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                            </span>
+                          )}
+                          {bItem.status === 'error' && (
+                            <span className="bg-rose-500 text-white rounded-full p-1 shadow flex items-center justify-center">
+                              <AlertCircle className="w-2.5 h-2.5" />
+                            </span>
+                          )}
+                          {bItem.status === 'pending' && (
+                            <span className="bg-slate-800 text-slate-400 rounded-full p-1 flex items-center justify-center">
+                              <Clock className="w-2.5 h-2.5" />
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="w-full text-center">
+                        <span className="text-[10px] text-slate-300 truncate block font-mono">
+                          #{idx + 1} {bItem.name}
+                        </span>
+                        <span className={`text-[9px] block ${
+                          bItem.status === 'done' ? 'text-emerald-400 font-semibold' :
+                          bItem.status === 'processing' ? 'text-rose-400 font-semibold' :
+                          bItem.status === 'error' ? 'text-rose-400' : 'text-slate-500'
+                        }`}>
+                          {bItem.status === 'done' ? 'Đã nhận diện' :
+                           bItem.status === 'processing' ? 'Đang đọc...' :
+                           bItem.status === 'error' ? 'Không đọc được' : 'Chờ quét'}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
+          ) : (
+            <>
+              {/* Upload Drop Area */}
+              <div className="border-2 border-dashed border-slate-750 hover:border-rose-500/50 bg-slate-850/50 rounded-2xl p-6 text-center transition-colors">
+                <input
+                  type="file"
+                  id="file-upload"
+                  multiple
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => handleFilesSelected(e.target.files)}
+                />
+                <label htmlFor="file-upload" className="cursor-pointer block space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-center justify-center mx-auto">
+                    <Upload className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-200">
+                      Kéo thả nhiều ảnh phiếu in hoặc <span className="text-rose-400 underline underline-offset-2">bấm để chọn ảnh</span>
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Hỗ trợ JPG, PNG, ảnh chụp màn hình TikTok Seller (đơn 1 món hoặc nhiều món)
+                    </p>
+                  </div>
+                </label>
+              </div>
+            </>
           )}
 
           {/* Scanned Items Review List */}
@@ -953,43 +1208,62 @@ export default function ScanModal({
 
         {/* Modal Footer */}
         <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800"
-          >
-            Đóng
-          </button>
-
-          {imagesQueue.length > 0 && (() => {
-            const existingDbCount = imagesQueue.filter(it => 
-              (it.tracking_code && orders.some(o => o.tracking_code && o.tracking_code.trim() === it.tracking_code.trim())) ||
-              (it.order_id && orders.some(o => o.order_id && o.order_id.trim() === it.order_id.trim()))
-            ).length;
-            const validCount = imagesQueue.length - existingDbCount;
-
-            return (
+          {isProcessing ? (
+            <>
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <Loader2 className="w-4 h-4 animate-spin text-rose-500" />
+                <span>Đang quét xử lý an toàn... Khi hoàn tất toàn bộ đợt sẽ mở bảng kiểm tra.</span>
+              </div>
               <button
                 type="button"
-                disabled={validCount === 0}
-                onClick={handleCreateAll}
-                className={`flex items-center gap-2 font-medium px-5 py-2.5 rounded-xl text-xs transition-all ${
-                  validCount === 0
-                    ? 'bg-slate-800 text-slate-500 border border-slate-700/60 cursor-not-allowed opacity-60'
-                    : 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white shadow-lg shadow-emerald-500/25'
-                }`}
-                title={validCount === 0 ? 'Tất cả đơn đã tồn tại trong hệ thống!' : 'Tạo tất cả các đơn hợp lệ'}
+                onClick={handleStopScan}
+                className="flex items-center gap-1.5 bg-slate-850 hover:bg-slate-800 text-rose-300 border border-slate-700 px-4 py-2 rounded-xl text-xs font-semibold transition-all"
               >
-                <CheckCircle2 className="w-4 h-4" />
-                <span>
-                  {existingDbCount > 0 
-                    ? `Tạo ${validCount} Đơn Hợp Lệ (Bỏ qua ${existingDbCount} đơn trùng)`
-                    : `Xác Nhận Tạo Tất Cả ${imagesQueue.length} Đơn Hàng`
-                  }
-                </span>
+                <StopCircle className="w-3.5 h-3.5" />
+                <span>Dừng Quét</span>
               </button>
-            );
-          })()}
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              >
+                Đóng
+              </button>
+
+              {imagesQueue.length > 0 && (() => {
+                const existingDbCount = imagesQueue.filter(it => 
+                  (it.tracking_code && orders.some(o => o.tracking_code && o.tracking_code.trim() === it.tracking_code.trim())) ||
+                  (it.order_id && orders.some(o => o.order_id && o.order_id.trim() === it.order_id.trim()))
+                ).length;
+                const validCount = imagesQueue.length - existingDbCount;
+
+                return (
+                  <button
+                    type="button"
+                    disabled={validCount === 0}
+                    onClick={handleCreateAll}
+                    className={`flex items-center gap-2 font-medium px-5 py-2.5 rounded-xl text-xs transition-all ${
+                      validCount === 0
+                        ? 'bg-slate-800 text-slate-500 border border-slate-700/60 cursor-not-allowed opacity-60'
+                        : 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white shadow-lg shadow-emerald-500/25'
+                    }`}
+                    title={validCount === 0 ? 'Tất cả đơn đã tồn tại trong hệ thống!' : 'Tạo tất cả các đơn hợp lệ'}
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>
+                      {existingDbCount > 0 
+                        ? `Tạo ${validCount} Đơn Hợp Lệ (Bỏ qua ${existingDbCount} đơn trùng)`
+                        : `Xác Nhận Tạo Tất Cả ${imagesQueue.length} Đơn Hàng`
+                      }
+                    </span>
+                  </button>
+                );
+              })()}
+            </>
+          )}
         </div>
       </div>
 

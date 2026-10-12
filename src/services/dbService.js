@@ -18,6 +18,8 @@ const DEFAULT_SETTINGS = {
   excel_file_name: 'TikTok_Shop_Orders.xlsx',
   shop_name: 'Nuôi cá cùng Jun',
   github_repo: '89hnim/tiktok-shop-manager',
+  ocr_engine: 'gemini', // 'gemini' | 'tesseract'
+  gemini_api_key: '',
 };
 
 /**
