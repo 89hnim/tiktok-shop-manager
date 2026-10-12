@@ -1420,35 +1420,38 @@ function scoreModelCandidate(candidate) {
   const name = (candidate.modelName || '').toLowerCase();
   let score = 0;
 
-  if (name.includes('gemini-1.5-flash-latest')) score += 100;
-  else if (name.includes('gemini-1.5-flash-002')) score += 95;
-  else if (name.includes('gemini-1.5-flash-001')) score += 90;
-  else if (name.includes('gemini-1.5-flash')) score += 85;
-  else if (name.includes('gemini-2.0-flash')) score += 80;
-  else if (name.includes('gemini-2.0-flash-exp')) score += 75;
-  else if (name.includes('gemini-1.5-flash-8b')) score += 70;
-  else if (name.includes('gemini-1.5-pro-latest')) score += 65;
-  else if (name.includes('gemini-1.5-pro')) score += 60;
-  else if (name.includes('flash')) score += 50;
-  else if (name.includes('gemini')) score += 40;
+  if (name.includes('gemini-3.5-flash-lite')) score += 115;
+  else if (name.includes('gemini-3.5-flash')) score += 110;
+  else if (name.includes('gemini-3.8-flash')) score += 105;
+  else if (name.includes('gemini-flash-latest')) score += 100;
+  else if (name.includes('gemini-3.1-flash-lite')) score += 95;
+  else if (name.includes('gemini-2.0-flash')) score += 85;
+  else if (name.includes('gemini-1.5-flash-latest')) score += 80;
+  else if (name.includes('gemini-1.5-flash-002')) score += 75;
+  else if (name.includes('gemini-1.5-flash')) score += 70;
+  else if (name.includes('flash-lite')) score += 65;
+  else if (name.includes('flash')) score += 60;
+  else if (name.includes('gemini-3.')) score += 50;
+  else if (name.includes('gemini-2.')) score += 40;
+  else if (name.includes('gemini')) score += 30;
   else score += 10;
 
-  if (candidate.apiVersion === 'v1' && name.includes('1.5-flash')) score += 5;
+  if (candidate.apiVersion === 'v1') score += 5;
   return score;
 }
 
 const mockDiscoveredModels = [
   { apiVersion: 'v1beta', modelName: 'models/gemini-pro' },
-  { apiVersion: 'v1beta', modelName: 'models/gemini-1.5-pro' },
-  { apiVersion: 'v1beta', modelName: 'models/gemini-1.5-flash-002' },
-  { apiVersion: 'v1', modelName: 'models/gemini-1.5-flash' },
-  { apiVersion: 'v1beta', modelName: 'models/gemini-1.5-flash-latest' },
+  { apiVersion: 'v1beta', modelName: 'models/gemini-3.1-flash-lite' },
+  { apiVersion: 'v1', modelName: 'models/gemini-3.5-flash-lite' },
+  { apiVersion: 'v1', modelName: 'models/gemini-3.5-flash' },
+  { apiVersion: 'v1', modelName: 'models/gemini-3.8-flash' },
 ];
 
 const sorted = [...mockDiscoveredModels].sort((a, b) => scoreModelCandidate(b) - scoreModelCandidate(a));
-assert.strictEqual(sorted[0].modelName, 'models/gemini-1.5-flash-latest', 'Top model must be 1.5-flash-latest');
-assert.strictEqual(sorted[1].modelName, 'models/gemini-1.5-flash-002', 'Second model must be 1.5-flash-002');
-assert.strictEqual(sorted[2].modelName, 'models/gemini-1.5-flash', 'Third model must be 1.5-flash on v1');
+assert.strictEqual(sorted[0].modelName, 'models/gemini-3.5-flash-lite', 'Top model must be 3.5-flash-lite');
+assert.strictEqual(sorted[1].modelName, 'models/gemini-3.5-flash', 'Second model must be 3.5-flash');
+assert.strictEqual(sorted[2].modelName, 'models/gemini-3.8-flash', 'Third model must be 3.8-flash');
 console.log('✅ Passed: Model candidate scoring correctly ranks high-speed flash models over legacy models!');
 
 // Verify candidate deduplication

@@ -743,7 +743,7 @@ export default function ScanModal({
                         </div>
                       </div>
 
-                      <div className="w-full text-center">
+                      <div className="w-full text-center" title={bItem.errorMsg || ''}>
                         <span className="text-[10px] text-slate-300 truncate block font-mono">
                           #{idx + 1} {bItem.name}
                         </span>
@@ -756,6 +756,11 @@ export default function ScanModal({
                            bItem.status === 'processing' ? 'Đang đọc...' :
                            bItem.status === 'error' ? 'Không đọc được' : 'Chờ quét'}
                         </span>
+                        {bItem.status === 'error' && bItem.errorMsg && (
+                          <span className="text-[8px] text-rose-300/80 block truncate max-w-full px-1" title={bItem.errorMsg}>
+                            {bItem.errorMsg}
+                          </span>
+                        )}
                       </div>
                     </div>
                   ))}

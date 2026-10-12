@@ -1,9 +1,11 @@
 /**
  * Google Gemini Vision Service for TikTok Shop Shipping Label OCR
- * Uses dynamic model discovery (ModelService.ListModels) and candidate fallback
- * Supports gemini-1.5-flash, gemini-1.5-flash-latest, gemini-2.0-flash, gemini-1.5-pro across v1 and v1beta
+ * Uses dynamic model discovery (ModelService.ListModels), automated failover (503/404/zero-quota),
+ * and priority scoring for modern Gemini Flash models (3.5-flash-lite, 3.5-flash, 3.8-flash, etc.)
  * Free tier: 15 RPM, 1,500 requests/day via Google AI Studio
  */
+
+import { getSettings, saveSettings } from './dbService';
 
 /**
  * Cache for the currently verified working model
@@ -22,17 +24,17 @@ export function getCachedWorkingModel() {
  * Fallback candidate models ordered by priority for Vision OCR
  */
 export const STATIC_CANDIDATE_MODELS = [
+  { apiVersion: 'v1', modelName: 'models/gemini-3.5-flash-lite', displayName: 'Gemini 3.5 Flash Lite (v1)' },
+  { apiVersion: 'v1', modelName: 'models/gemini-3.5-flash', displayName: 'Gemini 3.5 Flash (v1)' },
+  { apiVersion: 'v1', modelName: 'models/gemini-3.8-flash', displayName: 'Gemini 3.8 Flash (v1)' },
+  { apiVersion: 'v1beta', modelName: 'models/gemini-flash-latest', displayName: 'Gemini Flash Latest (v1beta)' },
+  { apiVersion: 'v1', modelName: 'models/gemini-3.1-flash-lite', displayName: 'Gemini 3.1 Flash Lite (v1)' },
+  { apiVersion: 'v1beta', modelName: 'models/gemini-3.5-flash-lite', displayName: 'Gemini 3.5 Flash Lite (v1beta)' },
+  { apiVersion: 'v1beta', modelName: 'models/gemini-3.5-flash', displayName: 'Gemini 3.5 Flash (v1beta)' },
+  { apiVersion: 'v1', modelName: 'models/gemini-2.0-flash', displayName: 'Gemini 2.0 Flash (v1)' },
+  { apiVersion: 'v1beta', modelName: 'models/gemini-2.0-flash', displayName: 'Gemini 2.0 Flash (v1beta)' },
   { apiVersion: 'v1', modelName: 'models/gemini-1.5-flash', displayName: 'Gemini 1.5 Flash (v1)' },
   { apiVersion: 'v1beta', modelName: 'models/gemini-1.5-flash-latest', displayName: 'Gemini 1.5 Flash Latest (v1beta)' },
-  { apiVersion: 'v1beta', modelName: 'models/gemini-1.5-flash-002', displayName: 'Gemini 1.5 Flash 002 (v1beta)' },
-  { apiVersion: 'v1beta', modelName: 'models/gemini-1.5-flash-001', displayName: 'Gemini 1.5 Flash 001 (v1beta)' },
-  { apiVersion: 'v1beta', modelName: 'models/gemini-1.5-flash', displayName: 'Gemini 1.5 Flash (v1beta)' },
-  { apiVersion: 'v1beta', modelName: 'models/gemini-2.0-flash-exp', displayName: 'Gemini 2.0 Flash Exp (v1beta)' },
-  { apiVersion: 'v1beta', modelName: 'models/gemini-2.0-flash', displayName: 'Gemini 2.0 Flash (v1beta)' },
-  { apiVersion: 'v1beta', modelName: 'models/gemini-1.5-flash-8b', displayName: 'Gemini 1.5 Flash 8B (v1beta)' },
-  { apiVersion: 'v1beta', modelName: 'models/gemini-1.5-pro-latest', displayName: 'Gemini 1.5 Pro Latest (v1beta)' },
-  { apiVersion: 'v1', modelName: 'models/gemini-1.5-pro', displayName: 'Gemini 1.5 Pro (v1)' },
-  { apiVersion: 'v1beta', modelName: 'models/gemini-pro', displayName: 'Gemini Pro (v1beta)' },
 ];
 
 /**
@@ -40,14 +42,12 @@ export const STATIC_CANDIDATE_MODELS = [
  */
 export async function fileToBase64(fileOrBlob) {
   if (typeof fileOrBlob === 'string') {
-    // If it's a data URL
     if (fileOrBlob.startsWith('data:')) {
       const matches = fileOrBlob.match(/^data:([^;]+);base64,(.+)$/);
       if (matches) {
         return { mimeType: matches[1], base64: matches[2] };
       }
     }
-    // If it's a blob/object URL or http URL, fetch it
     const res = await fetch(fileOrBlob);
     const blob = await res.blob();
     return blobToBase64(blob);
@@ -83,31 +83,35 @@ function cleanPhoneNumber(phone) {
 /**
  * Score a model candidate for suitability in vision/OCR tasks
  */
-function scoreModelCandidate(candidate) {
+export function scoreModelCandidate(candidate) {
   const name = (candidate.modelName || '').toLowerCase();
   let score = 0;
 
-  if (name.includes('gemini-1.5-flash-latest')) score += 100;
-  else if (name.includes('gemini-1.5-flash-002')) score += 95;
-  else if (name.includes('gemini-1.5-flash-001')) score += 90;
-  else if (name.includes('gemini-1.5-flash')) score += 85;
-  else if (name.includes('gemini-2.0-flash')) score += 80;
-  else if (name.includes('gemini-2.0-flash-exp')) score += 75;
-  else if (name.includes('gemini-1.5-flash-8b')) score += 70;
-  else if (name.includes('gemini-1.5-pro-latest')) score += 65;
-  else if (name.includes('gemini-1.5-pro')) score += 60;
-  else if (name.includes('flash')) score += 50;
-  else if (name.includes('gemini')) score += 40;
+  if (name.includes('gemini-3.5-flash-lite')) score += 115;
+  else if (name.includes('gemini-3.5-flash')) score += 110;
+  else if (name.includes('gemini-3.8-flash')) score += 105;
+  else if (name.includes('gemini-flash-latest')) score += 100;
+  else if (name.includes('gemini-3.1-flash-lite')) score += 95;
+  else if (name.includes('gemini-2.0-flash')) score += 85;
+  else if (name.includes('gemini-1.5-flash-latest')) score += 80;
+  else if (name.includes('gemini-1.5-flash-002')) score += 75;
+  else if (name.includes('gemini-1.5-flash')) score += 70;
+  else if (name.includes('flash-lite')) score += 65;
+  else if (name.includes('flash')) score += 60;
+  else if (name.includes('gemini-3.')) score += 50;
+  else if (name.includes('gemini-2.')) score += 40;
+  else if (name.includes('gemini')) score += 30;
   else score += 10;
 
-  // Give slight preference to stable v1 if model is 1.5-flash
-  if (candidate.apiVersion === 'v1' && name.includes('1.5-flash')) score += 5;
+  // Bonus for v1 stable
+  if (candidate.apiVersion === 'v1') score += 5;
 
   return score;
 }
 
 /**
  * Dynamically discover available models for an API key across v1 and v1beta
+ * Filters out image-generation, TTS, or non-multimodal models
  */
 export async function discoverGeminiModels(apiKey) {
   const key = (apiKey || '').trim().replace(/^["']|["']$/g, '');
@@ -124,8 +128,18 @@ export async function discoverGeminiModels(apiKey) {
       const data = await res.json();
       if (Array.isArray(data.models)) {
         for (const m of data.models) {
-          if (Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent')) {
-            const rawName = m.name || '';
+          const rawName = m.name || '';
+          const nameLower = rawName.toLowerCase();
+
+          // Exclude Image-Generation models (which have quota: 0 for chat/OCR), TTS, embedding
+          const isExcluded = 
+            nameLower.includes('-image') ||
+            nameLower.includes('imagen') ||
+            nameLower.includes('tts') ||
+            nameLower.includes('embedding') ||
+            nameLower.includes('aqa');
+
+          if (!isExcluded && Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent')) {
             const fullModelName = rawName.startsWith('models/') ? rawName : `models/${rawName}`;
             discovered.push({
               apiVersion: ver,
@@ -152,6 +166,21 @@ export async function resolveGeminiModel(apiKey, options = { forceRefresh: false
     throw new Error('Chưa cung cấp API Key');
   }
 
+  const currentSettings = getSettings();
+  if (
+    !options.forceRefresh &&
+    currentSettings.gemini_active_model &&
+    currentSettings.gemini_active_version &&
+    currentSettings.gemini_api_key === key
+  ) {
+    cachedWorkingModel = {
+      key,
+      apiVersion: currentSettings.gemini_active_version,
+      modelName: currentSettings.gemini_active_model,
+      displayName: currentSettings.gemini_active_model,
+    };
+  }
+
   if (!options.forceRefresh && cachedWorkingModel && cachedWorkingModel.key === key) {
     return {
       activeCandidate: cachedWorkingModel,
@@ -174,16 +203,13 @@ export async function resolveGeminiModel(apiKey, options = { forceRefresh: false
 
   let candidates = [];
   if (discovered.length > 0) {
-    // Sort discovered models by score descending
     candidates = discovered.sort((a, b) => scoreModelCandidate(b) - scoreModelCandidate(a));
-    // Append any static candidates that might not have appeared in ListModels
     for (const stat of STATIC_CANDIDATE_MODELS) {
       if (!candidates.some(c => c.apiVersion === stat.apiVersion && c.modelName === stat.modelName)) {
         candidates.push(stat);
       }
     }
   } else {
-    // Fallback directly to static list
     candidates = [...STATIC_CANDIDATE_MODELS];
   }
 
@@ -206,7 +232,7 @@ export async function resolveGeminiModel(apiKey, options = { forceRefresh: false
 
 /**
  * Scan shipping label using Google Gemini Vision
- * Automatically tries best candidate model and gracefully falls back if 404 occurs
+ * Automatically tries best candidate model and gracefully fails over across candidates on 503/404/zero-quota
  * @param {File|Blob|string} imageFile - The shipping label image
  * @param {Object} options - { apiKey, shopName }
  * @returns {Promise<{ success: boolean, data?: Object, error?: string, isRateLimited?: boolean, retryAfter?: number, modelUsed?: string }>}
@@ -294,8 +320,34 @@ LƯU Ý QUAN TRỌNG:
           body: JSON.stringify(requestBody),
         });
 
-        // HTTP 429 Rate Limiting
+        if (res.ok) {
+          response = res;
+          successfulCandidate = cand;
+          cachedWorkingModel = {
+            key: apiKey,
+            apiVersion: cand.apiVersion,
+            modelName: cand.modelName,
+            displayName: cand.displayName || cand.modelName,
+          };
+          saveSettings({
+            gemini_active_model: cand.modelName,
+            gemini_active_version: cand.apiVersion,
+          });
+          break;
+        }
+
+        const errJson = await res.json().catch(() => ({}));
+        const errMsg = errJson?.error?.message || `HTTP ${res.status} ${res.statusText}`;
+        lastError = errMsg;
+
+        // Check Rate Limiting HTTP 429
         if (res.status === 429) {
+          // If this is a zero-quota error (e.g. limit: 0 on experimental model), do NOT halt. Try next candidate!
+          if (errMsg.toLowerCase().includes('limit: 0') || errMsg.toLowerCase().includes('quota exceeded for metric')) {
+            console.warn(`Model ${cand.modelName} has limit 0. Failing over to next candidate...`);
+            continue;
+          }
+          // Genuine rate limit on active quota (15 RPM)
           const retryHeader = res.headers.get('Retry-After');
           const retrySeconds = retryHeader ? parseInt(retryHeader, 10) : 10;
           return {
@@ -306,24 +358,16 @@ LƯU Ý QUAN TRỌNG:
           };
         }
 
-        if (res.ok) {
-          response = res;
-          successfulCandidate = cand;
-          cachedWorkingModel = {
-            key: apiKey,
-            apiVersion: cand.apiVersion,
-            modelName: cand.modelName,
-            displayName: cand.displayName || cand.modelName,
-          };
-          break;
+        // If 503 (High demand / overloaded), 500/502/504, or 404 (model not found/deprecated):
+        // Gracefully try next candidate model!
+        if (res.status === 503 || res.status === 404 || res.status >= 500) {
+          console.warn(`Model ${cand.modelName} (${cand.apiVersion}) returned ${res.status}. Trying next candidate...`);
+          continue;
         }
 
-        // Handle error: If 404 (model not found), continue trying next candidate
-        const errJson = await res.json().catch(() => ({}));
-        lastError = errJson?.error?.message || `HTTP ${res.status} ${res.statusText}`;
-
-        if (res.status === 400 && lastError.toLowerCase().includes('api key')) {
-          break; // Stop immediately if API key itself is invalid
+        // If API key itself is invalid, stop immediately
+        if (res.status === 400 && errMsg.toLowerCase().includes('api key')) {
+          break;
         }
       } catch (fetchErr) {
         lastError = fetchErr.message;
@@ -352,7 +396,6 @@ LƯU Ý QUAN TRỌNG:
     try {
       parsed = JSON.parse(textPart);
     } catch (parseErr) {
-      // Fallback: clean markdown code fence if present
       const cleaned = textPart.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
       parsed = JSON.parse(cleaned);
     }
@@ -403,6 +446,7 @@ LƯU Ý QUAN TRỌNG:
 /**
  * Test if a given Gemini API Key is valid
  * Dynamically queries available models via ListModels and verifies with live ping
+ * Gracefully tries next candidate if a model returns 503 (high demand) or 404
  * @param {string} apiKey 
  * @returns {Promise<{ success: boolean, message: string, model?: string, apiVersion?: string }>}
  */
@@ -432,13 +476,17 @@ export async function testGeminiApiKey(apiKey) {
         });
 
         if (response.ok) {
-          // Success! Save working model to cache
+          // Success! Save working model to cache and persist
           cachedWorkingModel = {
             key,
             apiVersion: cand.apiVersion,
             modelName: cand.modelName,
             displayName: cand.displayName || cand.modelName,
           };
+          saveSettings({
+            gemini_active_model: cand.modelName,
+            gemini_active_version: cand.apiVersion,
+          });
           const cleanModelName = cand.modelName.replace(/^models\//, '');
           return {
             success: true,
@@ -449,10 +497,16 @@ export async function testGeminiApiKey(apiKey) {
         }
 
         const errJson = await response.json().catch(() => ({}));
-        lastError = errJson?.error?.message || `Mã HTTP ${response.status} ${response.statusText}`;
+        const errMsg = errJson?.error?.message || `Mã HTTP ${response.status} ${response.statusText}`;
+        lastError = errMsg;
+
+        // If 503 (high demand) or 404 or limit 0, continue trying next candidate
+        if (response.status === 503 || response.status === 404 || response.status >= 500 || errMsg.toLowerCase().includes('limit: 0')) {
+          continue;
+        }
 
         // If the key itself is invalid, stop cycling immediately
-        if (response.status === 400 && lastError.toLowerCase().includes('api key not valid')) {
+        if (response.status === 400 && errMsg.toLowerCase().includes('api key not valid')) {
           break;
         }
       } catch (reqErr) {

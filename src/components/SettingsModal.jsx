@@ -67,7 +67,9 @@ export default function SettingsModal({
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    clearGeminiModelCache();
+    if (formData.gemini_api_key !== settings.gemini_api_key) {
+      clearGeminiModelCache();
+    }
     onSaveSettings(formData);
     onClose();
   };
@@ -108,6 +110,13 @@ export default function SettingsModal({
     try {
       const res = await testGeminiApiKey(formData.gemini_api_key);
       setGeminiTestResult(res);
+      if (res.success && res.model) {
+        setFormData(prev => ({
+          ...prev,
+          gemini_active_model: res.model,
+          gemini_active_version: res.apiVersion || 'v1',
+        }));
+      }
     } catch (err) {
       setGeminiTestResult({ success: false, message: err.message });
     } finally {

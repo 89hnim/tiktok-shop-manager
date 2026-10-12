@@ -20,6 +20,8 @@ const DEFAULT_SETTINGS = {
   github_repo: '89hnim/tiktok-shop-manager',
   ocr_engine: 'gemini', // 'gemini' | 'tesseract'
   gemini_api_key: '',
+  gemini_active_model: '',
+  gemini_active_version: '',
 };
 
 /**
