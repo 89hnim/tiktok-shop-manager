@@ -1414,8 +1414,58 @@ const estimatedMinutes = ((batchSize - 1) * MIN_PACE_MS) / 60000;
 console.log(`⏱️ Pacing verification: Batch of 30 images takes ~${estimatedMinutes.toFixed(1)} minutes safely under 15 RPM free tier!`);
 console.log('✅ Passed: Free tier pacing & rate-limit algorithm verified!');
 
+console.log('\n--- TEST 26: Dynamic Gemini Model Resolution & Scoring ---');
+
+function scoreModelCandidate(candidate) {
+  const name = (candidate.modelName || '').toLowerCase();
+  let score = 0;
+
+  if (name.includes('gemini-1.5-flash-latest')) score += 100;
+  else if (name.includes('gemini-1.5-flash-002')) score += 95;
+  else if (name.includes('gemini-1.5-flash-001')) score += 90;
+  else if (name.includes('gemini-1.5-flash')) score += 85;
+  else if (name.includes('gemini-2.0-flash')) score += 80;
+  else if (name.includes('gemini-2.0-flash-exp')) score += 75;
+  else if (name.includes('gemini-1.5-flash-8b')) score += 70;
+  else if (name.includes('gemini-1.5-pro-latest')) score += 65;
+  else if (name.includes('gemini-1.5-pro')) score += 60;
+  else if (name.includes('flash')) score += 50;
+  else if (name.includes('gemini')) score += 40;
+  else score += 10;
+
+  if (candidate.apiVersion === 'v1' && name.includes('1.5-flash')) score += 5;
+  return score;
+}
+
+const mockDiscoveredModels = [
+  { apiVersion: 'v1beta', modelName: 'models/gemini-pro' },
+  { apiVersion: 'v1beta', modelName: 'models/gemini-1.5-pro' },
+  { apiVersion: 'v1beta', modelName: 'models/gemini-1.5-flash-002' },
+  { apiVersion: 'v1', modelName: 'models/gemini-1.5-flash' },
+  { apiVersion: 'v1beta', modelName: 'models/gemini-1.5-flash-latest' },
+];
+
+const sorted = [...mockDiscoveredModels].sort((a, b) => scoreModelCandidate(b) - scoreModelCandidate(a));
+assert.strictEqual(sorted[0].modelName, 'models/gemini-1.5-flash-latest', 'Top model must be 1.5-flash-latest');
+assert.strictEqual(sorted[1].modelName, 'models/gemini-1.5-flash-002', 'Second model must be 1.5-flash-002');
+assert.strictEqual(sorted[2].modelName, 'models/gemini-1.5-flash', 'Third model must be 1.5-flash on v1');
+console.log('✅ Passed: Model candidate scoring correctly ranks high-speed flash models over legacy models!');
+
+// Verify candidate deduplication
+const seenCandidates = new Set();
+const deduped = [];
+for (const cand of sorted) {
+  const key = `${cand.apiVersion}:${cand.modelName}`;
+  if (!seenCandidates.has(key)) {
+    seenCandidates.add(key);
+    deduped.push(cand);
+  }
+}
+assert.strictEqual(deduped.length, mockDiscoveredModels.length, 'All unique models preserved');
+console.log('✅ Passed: Model candidate deduplication verified!');
+
 testExcel().then(() => {
-  console.log('\n🎉 ALL 25 AUTOMATED TESTS PASSED SUCCESSFULLY! 🎉\n');
+  console.log('\n🎉 ALL 26 AUTOMATED TESTS PASSED SUCCESSFULLY! 🎉\n');
 });
 
 

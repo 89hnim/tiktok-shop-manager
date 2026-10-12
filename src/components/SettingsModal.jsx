@@ -21,7 +21,7 @@ import {
   Zap
 } from 'lucide-react';
 import { exportToExcelFile } from '../services/excelService';
-import { testGeminiApiKey } from '../services/geminiService';
+import { testGeminiApiKey, clearGeminiModelCache } from '../services/geminiService';
 
 export default function SettingsModal({
   isOpen,
@@ -67,6 +67,7 @@ export default function SettingsModal({
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    clearGeminiModelCache();
     onSaveSettings(formData);
     onClose();
   };

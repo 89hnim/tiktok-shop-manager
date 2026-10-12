@@ -1,8 +1,39 @@
 /**
  * Google Gemini Vision Service for TikTok Shop Shipping Label OCR
- * Uses gemini-1.5-flash with structured JSON output via response_mime_type: 'application/json'
+ * Uses dynamic model discovery (ModelService.ListModels) and candidate fallback
+ * Supports gemini-1.5-flash, gemini-1.5-flash-latest, gemini-2.0-flash, gemini-1.5-pro across v1 and v1beta
  * Free tier: 15 RPM, 1,500 requests/day via Google AI Studio
  */
+
+/**
+ * Cache for the currently verified working model
+ */
+let cachedWorkingModel = null; // { key, apiVersion, modelName, displayName }
+
+export function clearGeminiModelCache() {
+  cachedWorkingModel = null;
+}
+
+export function getCachedWorkingModel() {
+  return cachedWorkingModel;
+}
+
+/**
+ * Fallback candidate models ordered by priority for Vision OCR
+ */
+export const STATIC_CANDIDATE_MODELS = [
+  { apiVersion: 'v1', modelName: 'models/gemini-1.5-flash', displayName: 'Gemini 1.5 Flash (v1)' },
+  { apiVersion: 'v1beta', modelName: 'models/gemini-1.5-flash-latest', displayName: 'Gemini 1.5 Flash Latest (v1beta)' },
+  { apiVersion: 'v1beta', modelName: 'models/gemini-1.5-flash-002', displayName: 'Gemini 1.5 Flash 002 (v1beta)' },
+  { apiVersion: 'v1beta', modelName: 'models/gemini-1.5-flash-001', displayName: 'Gemini 1.5 Flash 001 (v1beta)' },
+  { apiVersion: 'v1beta', modelName: 'models/gemini-1.5-flash', displayName: 'Gemini 1.5 Flash (v1beta)' },
+  { apiVersion: 'v1beta', modelName: 'models/gemini-2.0-flash-exp', displayName: 'Gemini 2.0 Flash Exp (v1beta)' },
+  { apiVersion: 'v1beta', modelName: 'models/gemini-2.0-flash', displayName: 'Gemini 2.0 Flash (v1beta)' },
+  { apiVersion: 'v1beta', modelName: 'models/gemini-1.5-flash-8b', displayName: 'Gemini 1.5 Flash 8B (v1beta)' },
+  { apiVersion: 'v1beta', modelName: 'models/gemini-1.5-pro-latest', displayName: 'Gemini 1.5 Pro Latest (v1beta)' },
+  { apiVersion: 'v1', modelName: 'models/gemini-1.5-pro', displayName: 'Gemini 1.5 Pro (v1)' },
+  { apiVersion: 'v1beta', modelName: 'models/gemini-pro', displayName: 'Gemini Pro (v1beta)' },
+];
 
 /**
  * Convert File or Blob or URL to Base64 string and MIME type
@@ -46,19 +77,142 @@ function blobToBase64(blob) {
  */
 function cleanPhoneNumber(phone) {
   if (!phone) return '';
-  let str = String(phone).trim();
-  // Preserve asterisk masked phones like (+84)98*****97 or 098*****97
-  return str;
+  return String(phone).trim();
 }
 
 /**
- * Scan shipping label using Google Gemini 1.5 Flash Vision
+ * Score a model candidate for suitability in vision/OCR tasks
+ */
+function scoreModelCandidate(candidate) {
+  const name = (candidate.modelName || '').toLowerCase();
+  let score = 0;
+
+  if (name.includes('gemini-1.5-flash-latest')) score += 100;
+  else if (name.includes('gemini-1.5-flash-002')) score += 95;
+  else if (name.includes('gemini-1.5-flash-001')) score += 90;
+  else if (name.includes('gemini-1.5-flash')) score += 85;
+  else if (name.includes('gemini-2.0-flash')) score += 80;
+  else if (name.includes('gemini-2.0-flash-exp')) score += 75;
+  else if (name.includes('gemini-1.5-flash-8b')) score += 70;
+  else if (name.includes('gemini-1.5-pro-latest')) score += 65;
+  else if (name.includes('gemini-1.5-pro')) score += 60;
+  else if (name.includes('flash')) score += 50;
+  else if (name.includes('gemini')) score += 40;
+  else score += 10;
+
+  // Give slight preference to stable v1 if model is 1.5-flash
+  if (candidate.apiVersion === 'v1' && name.includes('1.5-flash')) score += 5;
+
+  return score;
+}
+
+/**
+ * Dynamically discover available models for an API key across v1 and v1beta
+ */
+export async function discoverGeminiModels(apiKey) {
+  const key = (apiKey || '').trim().replace(/^["']|["']$/g, '');
+  if (!key) return [];
+
+  const versions = ['v1', 'v1beta'];
+  const discovered = [];
+
+  for (const ver of versions) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/${ver}/models?key=${key}`;
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (Array.isArray(data.models)) {
+        for (const m of data.models) {
+          if (Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent')) {
+            const rawName = m.name || '';
+            const fullModelName = rawName.startsWith('models/') ? rawName : `models/${rawName}`;
+            discovered.push({
+              apiVersion: ver,
+              modelName: fullModelName,
+              displayName: m.displayName || rawName,
+            });
+          }
+        }
+      }
+    } catch (e) {
+      // Continue to next API version
+    }
+  }
+
+  return discovered;
+}
+
+/**
+ * Resolve an ordered list of viable model candidates for the given API Key
+ */
+export async function resolveGeminiModel(apiKey, options = { forceRefresh: false }) {
+  const key = (apiKey || '').trim().replace(/^["']|["']$/g, '');
+  if (!key) {
+    throw new Error('Chưa cung cấp API Key');
+  }
+
+  if (!options.forceRefresh && cachedWorkingModel && cachedWorkingModel.key === key) {
+    return {
+      activeCandidate: cachedWorkingModel,
+      candidates: [
+        cachedWorkingModel,
+        ...STATIC_CANDIDATE_MODELS.filter(
+          c => !(c.apiVersion === cachedWorkingModel.apiVersion && c.modelName === cachedWorkingModel.modelName)
+        ),
+      ],
+    };
+  }
+
+  // 1. Try dynamic discovery via ListModels
+  let discovered = [];
+  try {
+    discovered = await discoverGeminiModels(key);
+  } catch (e) {
+    discovered = [];
+  }
+
+  let candidates = [];
+  if (discovered.length > 0) {
+    // Sort discovered models by score descending
+    candidates = discovered.sort((a, b) => scoreModelCandidate(b) - scoreModelCandidate(a));
+    // Append any static candidates that might not have appeared in ListModels
+    for (const stat of STATIC_CANDIDATE_MODELS) {
+      if (!candidates.some(c => c.apiVersion === stat.apiVersion && c.modelName === stat.modelName)) {
+        candidates.push(stat);
+      }
+    }
+  } else {
+    // Fallback directly to static list
+    candidates = [...STATIC_CANDIDATE_MODELS];
+  }
+
+  // Deduplicate candidates
+  const seen = new Set();
+  const uniqueCandidates = [];
+  for (const c of candidates) {
+    const id = `${c.apiVersion}:${c.modelName}`;
+    if (!seen.has(id)) {
+      seen.add(id);
+      uniqueCandidates.push(c);
+    }
+  }
+
+  return {
+    activeCandidate: uniqueCandidates[0],
+    candidates: uniqueCandidates,
+  };
+}
+
+/**
+ * Scan shipping label using Google Gemini Vision
+ * Automatically tries best candidate model and gracefully falls back if 404 occurs
  * @param {File|Blob|string} imageFile - The shipping label image
  * @param {Object} options - { apiKey, shopName }
- * @returns {Promise<{ success: boolean, data?: Object, error?: string, isRateLimited?: boolean, retryAfter?: number }>}
+ * @returns {Promise<{ success: boolean, data?: Object, error?: string, isRateLimited?: boolean, retryAfter?: number, modelUsed?: string }>}
  */
 export async function scanOrderWithGemini(imageFile, options = {}) {
-  const apiKey = (options.apiKey || '').trim();
+  const apiKey = (options.apiKey || '').trim().replace(/^["']|["']$/g, '');
   if (!apiKey) {
     return {
       success: false,
@@ -113,39 +267,73 @@ LƯU Ý QUAN TRỌNG:
       },
     };
 
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    // Check Rate Limiting HTTP 429
-    if (response.status === 429) {
-      const retryHeader = response.headers.get('Retry-After');
-      const retrySeconds = retryHeader ? parseInt(retryHeader, 10) : 10;
-      return {
-        success: false,
-        isRateLimited: true,
-        retryAfter: isNaN(retrySeconds) ? 10 : retrySeconds,
-        error: `Đã chạm hạn mức Gemini Free Tier (15 lượt/phút). Cần chờ ${retrySeconds}s.`,
-      };
+    // Obtain model candidates
+    let candidates = [];
+    if (cachedWorkingModel && cachedWorkingModel.key === apiKey) {
+      candidates = [
+        cachedWorkingModel,
+        ...STATIC_CANDIDATE_MODELS.filter(
+          c => !(c.apiVersion === cachedWorkingModel.apiVersion && c.modelName === cachedWorkingModel.modelName)
+        ),
+      ];
+    } else {
+      const resolved = await resolveGeminiModel(apiKey);
+      candidates = resolved.candidates || STATIC_CANDIDATE_MODELS;
     }
 
-    if (!response.ok) {
-      let errText = '';
+    let response = null;
+    let successfulCandidate = null;
+    let lastError = '';
+
+    for (const cand of candidates) {
+      const apiUrl = `https://generativelanguage.googleapis.com/${cand.apiVersion}/${cand.modelName}:generateContent?key=${apiKey}`;
       try {
-        const errJson = await response.json();
-        errText = errJson?.error?.message || response.statusText;
-      } catch (e) {
-        errText = await response.text();
+        const res = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody),
+        });
+
+        // HTTP 429 Rate Limiting
+        if (res.status === 429) {
+          const retryHeader = res.headers.get('Retry-After');
+          const retrySeconds = retryHeader ? parseInt(retryHeader, 10) : 10;
+          return {
+            success: false,
+            isRateLimited: true,
+            retryAfter: isNaN(retrySeconds) ? 10 : retrySeconds,
+            error: `Đã chạm hạn mức Gemini Free Tier (15 lượt/phút). Cần chờ ${retrySeconds}s.`,
+          };
+        }
+
+        if (res.ok) {
+          response = res;
+          successfulCandidate = cand;
+          cachedWorkingModel = {
+            key: apiKey,
+            apiVersion: cand.apiVersion,
+            modelName: cand.modelName,
+            displayName: cand.displayName || cand.modelName,
+          };
+          break;
+        }
+
+        // Handle error: If 404 (model not found), continue trying next candidate
+        const errJson = await res.json().catch(() => ({}));
+        lastError = errJson?.error?.message || `HTTP ${res.status} ${res.statusText}`;
+
+        if (res.status === 400 && lastError.toLowerCase().includes('api key')) {
+          break; // Stop immediately if API key itself is invalid
+        }
+      } catch (fetchErr) {
+        lastError = fetchErr.message;
       }
+    }
+
+    if (!response || !response.ok) {
       return {
         success: false,
-        error: `Lỗi Google Gemini (${response.status}): ${errText}`,
+        error: `Lỗi Google Gemini: ${lastError || 'Không thể kết nối đến model khả dụng'}`,
       };
     }
 
@@ -164,7 +352,7 @@ LƯU Ý QUAN TRỌNG:
     try {
       parsed = JSON.parse(textPart);
     } catch (parseErr) {
-      // Fallback: clean markdown fences if present
+      // Fallback: clean markdown code fence if present
       const cleaned = textPart.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
       parsed = JSON.parse(cleaned);
     }
@@ -200,6 +388,7 @@ LƯU Ý QUAN TRỌNG:
     return {
       success: true,
       data: resultData,
+      modelUsed: successfulCandidate ? `${successfulCandidate.modelName} (${successfulCandidate.apiVersion})` : undefined,
       previewUrl: typeof imageFile === 'string' ? imageFile : URL.createObjectURL(imageFile),
     };
   } catch (err) {
@@ -213,37 +402,72 @@ LƯU Ý QUAN TRỌNG:
 
 /**
  * Test if a given Gemini API Key is valid
+ * Dynamically queries available models via ListModels and verifies with live ping
  * @param {string} apiKey 
- * @returns {Promise<{ success: boolean, message: string }>}
+ * @returns {Promise<{ success: boolean, message: string, model?: string, apiVersion?: string }>}
  */
 export async function testGeminiApiKey(apiKey) {
-  const key = (apiKey || '').trim();
+  const key = (apiKey || '').trim().replace(/^["']|["']$/g, '');
   if (!key) {
     return { success: false, message: 'Vui lòng nhập API Key để kiểm tra' };
   }
 
   try {
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`;
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [{ text: 'Trả về chuỗi "OK"' }],
-          },
-        ],
-      }),
-    });
+    const { candidates } = await resolveGeminiModel(key, { forceRefresh: true });
+    let lastError = '';
 
-    if (response.ok) {
-      return { success: true, message: 'Kết nối Google Gemini API thành công! API Key hoạt động tốt.' };
+    for (const cand of candidates) {
+      try {
+        const apiUrl = `https://generativelanguage.googleapis.com/${cand.apiVersion}/${cand.modelName}:generateContent?key=${key}`;
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [{ text: 'Trả về chuỗi "OK"' }],
+              },
+            ],
+          }),
+        });
+
+        if (response.ok) {
+          // Success! Save working model to cache
+          cachedWorkingModel = {
+            key,
+            apiVersion: cand.apiVersion,
+            modelName: cand.modelName,
+            displayName: cand.displayName || cand.modelName,
+          };
+          const cleanModelName = cand.modelName.replace(/^models\//, '');
+          return {
+            success: true,
+            message: `Kết nối thành công! Đã tự động nhận diện và kích hoạt model ${cleanModelName} (${cand.apiVersion}).`,
+            model: cand.modelName,
+            apiVersion: cand.apiVersion,
+          };
+        }
+
+        const errJson = await response.json().catch(() => ({}));
+        lastError = errJson?.error?.message || `Mã HTTP ${response.status} ${response.statusText}`;
+
+        // If the key itself is invalid, stop cycling immediately
+        if (response.status === 400 && lastError.toLowerCase().includes('api key not valid')) {
+          break;
+        }
+      } catch (reqErr) {
+        lastError = reqErr.message;
+      }
     }
 
-    const errJson = await response.json().catch(() => ({}));
-    const msg = errJson?.error?.message || `Mã phản hồi HTTP ${response.status}`;
-    return { success: false, message: `Kiểm tra thất bại: ${msg}` };
+    return {
+      success: false,
+      message: `Kiểm tra thất bại: ${lastError || 'Không tìm thấy model phù hợp cho API Key này'}`,
+    };
   } catch (err) {
-    return { success: false, message: `Lỗi kết nối: ${err.message}` };
+    return {
+      success: false,
+      message: `Lỗi kết nối: ${err.message}`,
+    };
   }
 }
