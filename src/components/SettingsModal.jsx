@@ -18,10 +18,17 @@ import {
   Eye,
   EyeOff,
   KeyRound,
-  Zap
+  Zap,
+  Image as ImageIcon,
+  Trash2
 } from 'lucide-react';
 import { exportToExcelFile } from '../services/excelService';
 import { testGeminiApiKey, clearGeminiModelCache } from '../services/geminiService';
+import {
+  getOrderImagesMetadata,
+  cleanupExpiredOrderImages,
+  clearAllOrderImages
+} from '../services/imageStorageService';
 
 export default function SettingsModal({
   isOpen,
@@ -41,6 +48,7 @@ export default function SettingsModal({
     github_repo: settings.github_repo || '89hnim/tiktok-shop-manager',
     ocr_engine: settings.ocr_engine || 'gemini',
     gemini_api_key: settings.gemini_api_key || '',
+    image_retention_days: settings.image_retention_days ?? 30,
   });
 
   const [excelPath, setExcelPath] = useState('Đang lấy đường dẫn...');
@@ -50,8 +58,31 @@ export default function SettingsModal({
   const [testingGemini, setTestingGemini] = useState(false);
   const [geminiTestResult, setGeminiTestResult] = useState(null);
   const [showApiKey, setShowApiKey] = useState(false);
+  const [imageStorageStats, setImageStorageStats] = useState({ count: 0, totalSizeBytes: 0 });
+  const [cleaningImages, setCleaningImages] = useState(false);
+
+  const loadImageStats = async () => {
+    try {
+      const meta = await getOrderImagesMetadata();
+      setImageStorageStats({ count: meta.count || 0, totalSizeBytes: meta.totalSizeBytes || 0 });
+    } catch (e) {}
+  };
 
   React.useEffect(() => {
+    if (isOpen) {
+      setFormData({
+        shop_name: settings.shop_name || 'Nuôi cá cùng Jun',
+        tiktok_fee_percent_default: settings.tiktok_fee_percent_default ?? 5.0,
+        tiktok_fixed_fee_default: settings.tiktok_fixed_fee_default ?? 3000,
+        auto_sync_excel: settings.auto_sync_excel ?? true,
+        github_repo: settings.github_repo || '89hnim/tiktok-shop-manager',
+        ocr_engine: settings.ocr_engine || 'gemini',
+        gemini_api_key: settings.gemini_api_key || '',
+        image_retention_days: settings.image_retention_days ?? 30,
+      });
+      loadImageStats();
+    }
+
     if (window.electronAPI && window.electronAPI.getExcelPath) {
       window.electronAPI.getExcelPath().then(p => setExcelPath(p));
     } else {
@@ -61,7 +92,7 @@ export default function SettingsModal({
     if (window.electronAPI && window.electronAPI.getVersion) {
       window.electronAPI.getVersion().then(v => setCurrentVersion(v || '1.0.0'));
     }
-  }, [isOpen]);
+  }, [isOpen, settings]);
 
   if (!isOpen) return null;
 
@@ -70,8 +101,35 @@ export default function SettingsModal({
     if (formData.gemini_api_key !== settings.gemini_api_key) {
       clearGeminiModelCache();
     }
-    onSaveSettings(formData);
+    const retention = Number(formData.image_retention_days) || 30;
+    cleanupExpiredOrderImages(retention).catch(() => {});
+    onSaveSettings({ ...formData, image_retention_days: retention });
     onClose();
+  };
+
+  const handleCleanupExpiredNow = async () => {
+    setCleaningImages(true);
+    try {
+      const retention = Number(formData.image_retention_days) || 30;
+      const res = await cleanupExpiredOrderImages(retention);
+      await loadImageStats();
+      alert(`Đã dọn dẹp ${res.deletedCount || 0} ảnh vận đơn quá hạn (> ${retention} ngày).`);
+    } finally {
+      setCleaningImages(false);
+    }
+  };
+
+  const handleClearAllSavedImages = async () => {
+    if (!confirm('Bạn có chắc muốn xoá toàn bộ ảnh nhãn vận đơn đang lưu trong bộ nhớ không? (Dữ liệu đơn hàng và doanh thu vẫn giữ nguyên 100%)')) {
+      return;
+    }
+    setCleaningImages(true);
+    try {
+      await clearAllOrderImages();
+      await loadImageStats();
+    } finally {
+      setCleaningImages(false);
+    }
   };
 
   const handleManualExport = async () => {
@@ -360,6 +418,64 @@ export default function SettingsModal({
                 )}
               </div>
             )}
+          </div>
+
+          {/* Order Label Image Storage & 30-Day Auto Cleanup Box */}
+          <div className="p-4 bg-slate-850 border border-slate-750 rounded-2xl space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ImageIcon className="w-4 h-4 text-sky-400" />
+                <span className="font-bold text-white text-sm">Lưu Trữ Ảnh Nhãn Vận Đơn (IndexedDB)</span>
+              </div>
+              <span className="text-[11px] font-mono font-bold bg-sky-500/10 border border-sky-500/30 text-sky-300 px-2.5 py-0.5 rounded-lg">
+                {imageStorageStats.count} ảnh ({(imageStorageStats.totalSizeBytes / (1024 * 1024)).toFixed(2)} MB)
+              </span>
+            </div>
+
+            <p className="text-slate-400 text-[11px] leading-relaxed">
+              Ảnh phiếu gửi hàng được tự động nén thông minh (~60KB/ảnh) và lưu tách biệt trong IndexedDB để bạn có thể bấm xem lại hoặc tải xuống bất cứ lúc nào từ bảng đơn hàng mà không làm nặng ứng dụng.
+            </p>
+
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1">
+              <label className="text-slate-300 text-xs font-medium">
+                Tự động xóa ảnh cũ sau:
+              </label>
+              <select
+                value={formData.image_retention_days}
+                onChange={(e) => setFormData({ ...formData, image_retention_days: Number(e.target.value) })}
+                className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs font-semibold text-sky-300 focus:outline-none focus:border-sky-400"
+              >
+                <option value={7}>7 ngày</option>
+                <option value={15}>15 ngày</option>
+                <option value={30}>30 ngày (Khuyên dùng)</option>
+                <option value={60}>60 ngày</option>
+                <option value={90}>90 ngày</option>
+              </select>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                type="button"
+                disabled={cleaningImages}
+                onClick={handleCleanupExpiredNow}
+                className="flex items-center gap-1.5 bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 px-3 py-1.5 rounded-xl font-semibold transition-all disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${cleaningImages ? 'animate-spin' : ''}`} />
+                <span>Dọn Ảnh Quá Hạn Ngay</span>
+              </button>
+
+              {imageStorageStats.count > 0 && (
+                <button
+                  type="button"
+                  disabled={cleaningImages}
+                  onClick={handleClearAllSavedImages}
+                  className="flex items-center gap-1.5 bg-slate-800 hover:bg-rose-500/20 text-slate-400 hover:text-rose-300 border border-slate-700 hover:border-rose-500/30 px-3 py-1.5 rounded-xl font-medium transition-all disabled:opacity-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Xoá Tất Cả Ảnh ({imageStorageStats.count})</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {/* GitHub Release & Software Updates Box */}

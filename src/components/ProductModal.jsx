@@ -16,6 +16,7 @@ export default function ProductModal({
   onClose,
   initialProduct = null,
   prefilledSku = '',
+  forceNewSkuTab = false,
   defaultFeePercent = 5.0,
   defaultFixedFee = 3000,
   onSaveProduct,
@@ -52,11 +53,11 @@ export default function ProductModal({
       }
 
       let targetIndex = 0;
-      // If a prefilled SKU was requested and doesn't exist yet, automatically append it!
-      if (prefilledSku && prefilledSku.trim()) {
-        const cleanSku = prefilledSku.trim();
+      const cleanSku = prefilledSku ? prefilledSku.trim() : '';
+
+      if (cleanSku) {
         const existingIdx = skus.findIndex(s => (s.sku || '').toLowerCase() === cleanSku.toLowerCase());
-        if (existingIdx >= 0) {
+        if (existingIdx >= 0 && !forceNewSkuTab) {
           targetIndex = existingIdx;
         } else {
           // Pre-populate components from the first SKU if available for convenient duplication
@@ -65,10 +66,11 @@ export default function ProductModal({
             ? templateSku.components.map(c => ({ id: generateUUID(), name: c.name, cost: c.cost }))
             : [{ id: generateUUID(), name: '', cost: '' }];
 
+          const newSkuCode = existingIdx >= 0 ? '' : cleanSku;
           const newSku = computeSkuMetrics({
             id: generateUUID(),
-            sku: cleanSku,
-            name: cleanSku,
+            sku: newSkuCode,
+            name: newSkuCode,
             expected_price: templateSku ? templateSku.expected_price : '',
             components: clonedComps,
           }, feeP, feeF);
@@ -76,6 +78,23 @@ export default function ProductModal({
           skus.push(newSku);
           targetIndex = skus.length - 1;
         }
+      } else if (forceNewSkuTab) {
+        // Explicitly requested creating a brand-new SKU tab
+        const templateSku = skus[0];
+        const clonedComps = templateSku && Array.isArray(templateSku.components) && templateSku.components.length > 0
+          ? templateSku.components.map(c => ({ id: generateUUID(), name: c.name, cost: c.cost }))
+          : [{ id: generateUUID(), name: '', cost: '' }];
+
+        const newSku = computeSkuMetrics({
+          id: generateUUID(),
+          sku: '',
+          name: '',
+          expected_price: templateSku ? templateSku.expected_price : '',
+          components: clonedComps,
+        }, feeP, feeF);
+
+        skus.push(newSku);
+        targetIndex = skus.length - 1;
       }
 
       setProductData({
@@ -107,7 +126,7 @@ export default function ProductModal({
       });
       setActiveSkuIndex(0);
     }
-  }, [isOpen, initialProduct, prefilledSku, defaultFeePercent, defaultFixedFee]);
+  }, [isOpen, initialProduct, prefilledSku, forceNewSkuTab, defaultFeePercent, defaultFixedFee]);
 
   if (!isOpen || !productData) return null;
 

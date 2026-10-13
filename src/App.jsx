@@ -26,6 +26,7 @@ import {
   deleteOrder
 } from './services/dbService';
 import { exportToExcelFile } from './services/excelService';
+import { cleanupExpiredOrderImages } from './services/imageStorageService';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('orders'); // 'orders' | 'products'
@@ -64,11 +65,18 @@ export default function App() {
     setProducts(prods);
     setOrders(ords);
     setSettings(sets);
+    return sets;
   };
 
   useEffect(() => {
-    refreshData();
+    const initialSets = refreshData();
     setUnreadErrorsCount(errorLogService.getUnreadCount());
+
+    // Tự động dọn dẹp ảnh nhãn vận đơn quá hạn (mặc định 30 ngày)
+    const retentionDays = Number(initialSets?.image_retention_days ?? 30);
+    if (retentionDays > 0) {
+      cleanupExpiredOrderImages(retentionDays).catch(() => {});
+    }
 
     // Listen for database change events
     const handleDbChange = () => {
@@ -203,6 +211,7 @@ export default function App() {
                 onDeleteOrder={handleDeleteOrder}
                 onSelectCustomer={handleSelectCustomer}
                 onEditOrder={(order) => setEditingOrder(order)}
+                retentionDays={Number(settings?.image_retention_days ?? 30)}
               />
             </div>
           ) : (

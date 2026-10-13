@@ -1,6 +1,6 @@
 {
   "name": "tiktok-shop-manager",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "TikTok Shop Order & Profit Management System with OCR and Excel Sync",
   "main": "electron/main.js",
   "scripts": {

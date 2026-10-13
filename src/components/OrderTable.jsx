@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { 
   Search, 
   Calendar, 
@@ -15,24 +15,54 @@ import {
   Info, 
   Sparkles, 
   ArrowUpDown, 
+  ArrowDown,
+  ArrowUp,
+  Image as ImageIcon,
   Tag, 
   PhoneCall 
 } from 'lucide-react';
-import { getOrderTotalCogs } from '../services/dbService';
+import { getOrderTotalCogs, sortOrdersByDate } from '../services/dbService';
+import { getOrderImagesMetadata } from '../services/imageStorageService';
 import StatsCards from './StatsCards';
+import OrderImageModal from './OrderImageModal';
 
 export default function OrderTable({ 
   orders = [], 
   onUpdateOrder, 
   onDeleteOrder, 
   onSelectCustomer,
-  onEditOrder
+  onEditOrder,
+  retentionDays = 30
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFilter, setDateFilter] = useState('all'); // all, today, yesterday, 7days, thisMonth, custom
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
   const [statusFilter, setStatusFilter] = useState('all'); // all, settled, pending, returned
+  const [sortDirection, setSortDirection] = useState('desc'); // 'desc' = Mới nhất giảm dần (default)
+
+  // Stored Label Images Metadata & Modal State
+  const [imageMeta, setImageMeta] = useState({ orderIds: {}, trackingCodes: {}, count: 0 });
+  const [viewingImageOrder, setViewingImageOrder] = useState(null);
+
+  const refreshImageMetadata = useCallback(async () => {
+    try {
+      const meta = await getOrderImagesMetadata();
+      setImageMeta(meta);
+    } catch (e) {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshImageMetadata();
+  }, [orders.length, refreshImageMetadata]);
+
+  useEffect(() => {
+    const handler = () => refreshImageMetadata();
+    window.addEventListener('order-images-changed', handler);
+    return () => window.removeEventListener('order-images-changed', handler);
+  }, [refreshImageMetadata]);
 
   // Month & Year Picker Popup State
   const [isMonthPickerOpen, setIsMonthPickerOpen] = useState(false);
@@ -44,7 +74,7 @@ export default function OrderTable({
   const [editingSettled, setEditingSettled] = useState({}); // { [orderId]: value }
   const [editingNote, setEditingNote] = useState({});       // { [orderId]: value }
 
-  // Filter logic
+  // Filter & Sort logic (sorted by newest order_date descending by default)
   const filteredOrders = useMemo(() => {
     const now = new Date();
     const todayStr = now.toISOString().slice(0, 10);
@@ -59,7 +89,7 @@ export default function OrderTable({
 
     const currentYearMonth = todayStr.slice(0, 7);
 
-    return orders.filter(order => {
+    const filtered = orders.filter(order => {
       // 1. Text Search
       if (searchQuery) {
         const q = searchQuery.toLowerCase().trim();
@@ -105,7 +135,9 @@ export default function OrderTable({
 
       return true;
     });
-  }, [orders, searchQuery, dateFilter, customStartDate, customEndDate, statusFilter]);
+
+    return sortOrdersByDate(filtered, sortDirection);
+  }, [orders, searchQuery, dateFilter, customStartDate, customEndDate, statusFilter, sortDirection]);
 
   // Handlers for Month & Year Quick Filtering
   const handleSelectMonth = (monthNumber, year = pickerYear) => {
@@ -314,7 +346,21 @@ export default function OrderTable({
             <tr>
               <th className="py-3 px-3 w-12 text-center">STT</th>
               <th className="py-3 px-3 min-w-[170px]">Mã Vận Đơn</th>
-              <th className="py-3 px-3 min-w-[130px]">Thời Gian</th>
+              <th className="py-3 px-3 min-w-[140px]">
+                <button
+                  type="button"
+                  onClick={() => setSortDirection(prev => prev === 'desc' ? 'asc' : 'desc')}
+                  className="flex items-center gap-1 hover:text-rose-400 transition-colors uppercase font-semibold tracking-wider"
+                  title={sortDirection === 'desc' ? 'Đang sắp xếp: Mới nhất giảm dần (Bấm để đổi sang Cũ nhất)' : 'Đang sắp xếp: Cũ nhất tăng dần (Bấm để đổi sang Mới nhất)'}
+                >
+                  <span>Thời Gian</span>
+                  {sortDirection === 'desc' ? (
+                    <ArrowDown className="w-3.5 h-3.5 text-rose-400" />
+                  ) : (
+                    <ArrowUp className="w-3.5 h-3.5 text-amber-400" />
+                  )}
+                </button>
+              </th>
               <th className="py-3 px-3 min-w-[200px]">Sản Phẩm & SKU</th>
               <th className="py-3 px-2 w-12 text-center">SL</th>
               <th className="py-3 px-3 min-w-[170px]">Khách Hàng & SĐT</th>
@@ -323,7 +369,7 @@ export default function OrderTable({
               <th className="py-3 px-3 min-w-[140px] text-right">Tiền Tất Toán</th>
               <th className="py-3 px-3 min-w-[130px] text-right">Lợi Nhuận</th>
               <th className="py-3 px-3 min-w-[180px]">Ghi Chú</th>
-              <th className="py-3 px-2 w-20 text-center">Thao tác</th>
+              <th className="py-3 px-2 w-28 text-center">Thao tác</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/80 text-slate-300">
@@ -353,6 +399,11 @@ export default function OrderTable({
                   (settledAmount !== null && settledAmount < 0)
                 );
 
+                const hasSavedImage = Boolean(
+                  imageMeta.orderIds[order.id] ||
+                  (order.tracking_code && imageMeta.trackingCodes[order.tracking_code.trim()])
+                );
+
                 return (
                   <tr 
                     key={order.id} 
@@ -365,10 +416,23 @@ export default function OrderTable({
                       {idx + 1}
                     </td>
 
-                    {/* Tracking Code & Order ID */}
+                    {/* Tracking Code & Order ID + Saved Image Badge */}
                     <td className="py-2.5 px-3">
-                      <div className="font-mono font-bold text-white tracking-wide text-xs">
-                        {order.tracking_code || '-'}
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono font-bold text-white tracking-wide text-xs">
+                          {order.tracking_code || '-'}
+                        </span>
+                        {hasSavedImage && (
+                          <button
+                            type="button"
+                            onClick={() => setViewingImageOrder(order)}
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-sky-500/15 hover:bg-sky-500/25 text-sky-400 border border-sky-500/30 text-[10px] font-medium transition-colors"
+                            title="Bấm để xem / tải ảnh nhãn vận đơn gốc"
+                          >
+                            <ImageIcon className="w-2.5 h-2.5" />
+                            <span>Ảnh đơn</span>
+                          </button>
+                        )}
                       </div>
                       {order.order_id && (
                         <div className="text-[10px] text-slate-400 font-mono truncate max-w-[160px]" title={order.order_id}>
@@ -530,9 +594,25 @@ export default function OrderTable({
                       />
                     </td>
 
-                    {/* Action buttons (Edit & Delete) */}
+                    {/* Action buttons (View/Download Image, Edit & Delete) */}
                     <td className="py-2.5 px-2 text-center">
                       <div className="flex items-center justify-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setViewingImageOrder(order)}
+                          className={`p-1.5 rounded-lg transition-colors ${
+                            hasSavedImage
+                              ? 'text-sky-400 bg-sky-500/10 hover:bg-sky-500/25 border border-sky-500/30 shadow-sm'
+                              : 'text-slate-500 hover:text-sky-400 hover:bg-slate-700/60'
+                          }`}
+                          title={
+                            hasSavedImage
+                              ? 'Xem / Tải xuống ảnh nhãn vận đơn (Tự xoá sau 30 ngày)'
+                              : 'Chưa có ảnh vận đơn - Bấm để đính kèm ảnh'
+                          }
+                        >
+                          <ImageIcon className="w-3.5 h-3.5" />
+                        </button>
                         {onEditOrder && (
                           <button
                             onClick={() => onEditOrder(order)}
@@ -732,6 +812,15 @@ export default function OrderTable({
           </div>
         </div>
       )}
+
+      {/* Order Label Image Viewer / Downloader Modal */}
+      <OrderImageModal
+        isOpen={Boolean(viewingImageOrder)}
+        order={viewingImageOrder}
+        retentionDays={retentionDays}
+        onClose={() => setViewingImageOrder(null)}
+        onImageChanged={refreshImageMetadata}
+      />
     </div>
   );
 }

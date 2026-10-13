@@ -60,11 +60,12 @@ export default function ScanModal({
   const [engineUsedText, setEngineUsedText] = useState('');
   const abortScanRef = useRef(false);
 
-  // Unified Product Modal state (dùng chung cho cả Tạo mới SP & Cập nhật SKU thiếu)
+  // Unified Product Modal state (dùng chung cho cả Tạo mới SP & Cập nhật/Thêm SKU)
   const [productModalConfig, setProductModalConfig] = useState({
     isOpen: false,
     initialProduct: null,
     prefilledSku: '',
+    forceNewSkuTab: false,
     targetTempId: null,
     targetItemId: null,
   });
@@ -106,21 +107,23 @@ export default function ScanModal({
     setProductModalConfig({
       isOpen: true,
       initialProduct: {
-        name: item.product_name || '',
-        sku: item.sku || '',
+        name: item?.product_name || '',
+        sku: item?.sku || '',
       },
-      prefilledSku: item.sku || '',
+      prefilledSku: item?.sku || '',
+      forceNewSkuTab: false,
       targetTempId: cardTempId,
-      targetItemId: item.id,
+      targetItemId: item?.id || null,
     });
   };
 
   // Open full product modal to add/update missing SKU to existing product
-  const handleOpenUpdateSkuModal = (existingProduct, newSku, cardTempId, itemId) => {
+  const handleOpenUpdateSkuModal = (existingProduct, newSku, cardTempId, itemId, forceNewSkuTab = false) => {
     setProductModalConfig({
       isOpen: true,
       initialProduct: existingProduct,
       prefilledSku: newSku || '',
+      forceNewSkuTab: Boolean(forceNewSkuTab),
       targetTempId: cardTempId,
       targetItemId: itemId,
     });
@@ -338,6 +341,13 @@ export default function ScanModal({
 
   // Handle Product change for a specific item in a card
   const handleProductChangeForCardItem = (cardTempId, itemId, prodId) => {
+    if (prodId === '__CREATE_NEW_PRODUCT__') {
+      const targetCard = imagesQueue.find(c => c.tempId === cardTempId);
+      const targetItem = (targetCard?.items || []).find(it => it.id === itemId);
+      handleOpenCreateProductModal(cardTempId, targetItem || { id: itemId, product_name: '', sku: '' });
+      return;
+    }
+
     const prod = getProductById(prodId);
     setImagesQueue(prev => prev.map(card => {
       if (card.tempId !== cardTempId) return card;
@@ -362,7 +372,19 @@ export default function ScanModal({
   };
 
   // Handle SKU change for a specific item in a card
-  const handleSkuChangeForCardItem = (cardTempId, itemId, skuCode) => {
+  const handleSkuChangeForCardItem = (cardTempId, itemId, skuCode, currentProd = null) => {
+    if (skuCode === '__CREATE_NEW_SKU__') {
+      const targetCard = imagesQueue.find(c => c.tempId === cardTempId);
+      const targetItem = (targetCard?.items || []).find(it => it.id === itemId);
+      const prodToEdit = currentProd || getProductById(targetItem?.selectedProductId);
+      if (prodToEdit) {
+        handleOpenUpdateSkuModal(prodToEdit, '', cardTempId, itemId, true);
+      } else {
+        handleOpenCreateProductModal(cardTempId, targetItem || { id: itemId, product_name: '', sku: '' });
+      }
+      return;
+    }
+
     setImagesQueue(prev => prev.map(card => {
       if (card.tempId !== cardTempId) return card;
       return {
@@ -453,6 +475,7 @@ export default function ScanModal({
       items: orderItems,
       customer_name: card.customer_name,
       customer_phone: card.customer_phone,
+      image_source: card.file || card.previewUrl || null,
     }]);
 
     handleRemoveCard(card.tempId);
@@ -508,6 +531,7 @@ export default function ScanModal({
         items: orderItems,
         customer_name: card.customer_name,
         customer_phone: card.customer_phone,
+        image_source: card.file || card.previewUrl || null,
       };
     });
 
@@ -571,7 +595,7 @@ export default function ScanModal({
       return { ...card, items: updatedItems };
     }));
 
-    setProductModalConfig({ isOpen: false, initialProduct: null, prefilledSku: '', targetTempId: null, targetItemId: null });
+    setProductModalConfig({ isOpen: false, initialProduct: null, prefilledSku: '', forceNewSkuTab: false, targetTempId: null, targetItemId: null });
   };
 
   return (
@@ -1062,16 +1086,15 @@ export default function ScanModal({
                                         <label className="text-[10px] font-semibold text-amber-300">
                                           1. Liên Kết Sản Phẩm Kho
                                         </label>
-                                        {!hasMatchedProduct && (
-                                          <button
-                                            type="button"
-                                            onClick={() => handleOpenCreateProductModal(card.tempId, it)}
-                                            className="text-[10px] text-amber-400 hover:text-amber-300 hover:underline flex items-center gap-0.5 font-medium"
-                                          >
-                                            <Plus className="w-3 h-3" />
-                                            <span>Tạo SP</span>
-                                          </button>
-                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenCreateProductModal(card.tempId, it)}
+                                          className="text-[10px] text-amber-400 hover:text-amber-300 hover:underline flex items-center gap-0.5 font-medium"
+                                          title="Tạo một sản phẩm mới trong kho từ mặt hàng này"
+                                        >
+                                          <Plus className="w-3 h-3" />
+                                          <span>Tạo SP</span>
+                                        </button>
                                       </div>
                                       <select
                                         value={it.selectedProductId || ''}
@@ -1086,6 +1109,9 @@ export default function ScanModal({
                                             {p.name}
                                           </option>
                                         ))}
+                                        <option value="__CREATE_NEW_PRODUCT__">
+                                          ➕ + Tạo sản phẩm mới...
+                                        </option>
                                       </select>
                                     </div>
 
@@ -1095,12 +1121,24 @@ export default function ScanModal({
                                         <label className="text-[10px] font-semibold text-rose-400 block">
                                           2. Phân Loại SKU
                                         </label>
-                                        {isMissingSku && (
+                                        {hasMatchedProduct && (
                                           <button
                                             type="button"
-                                            onClick={() => handleOpenUpdateSkuModal(selProd, it.sku, card.tempId, it.id)}
+                                            onClick={() =>
+                                              handleOpenUpdateSkuModal(
+                                                selProd,
+                                                isMissingSku ? it.sku : '',
+                                                card.tempId,
+                                                it.id,
+                                                !isMissingSku
+                                              )
+                                            }
                                             className="text-[10px] text-amber-400 hover:text-amber-300 hover:underline flex items-center gap-0.5 font-bold"
-                                            title={`Thêm SKU "${it.sku}" vào sản phẩm`}
+                                            title={
+                                              isMissingSku
+                                                ? `Thêm SKU "${it.sku}" vào sản phẩm "${selProd?.name}"`
+                                                : `Thêm phân loại SKU mới vào sản phẩm "${selProd?.name}"`
+                                            }
                                           >
                                             <Plus className="w-3 h-3" />
                                             <span>Thêm SKU</span>
@@ -1110,7 +1148,7 @@ export default function ScanModal({
                                       {skuList.length > 0 ? (
                                         <select
                                           value={it.sku}
-                                          onChange={(e) => handleSkuChangeForCardItem(card.tempId, it.id, e.target.value)}
+                                          onChange={(e) => handleSkuChangeForCardItem(card.tempId, it.id, e.target.value, selProd)}
                                           className={`w-full bg-slate-900 border rounded-xl px-2.5 py-1.5 text-xs font-mono font-bold focus:outline-none ${
                                             isMissingSku
                                               ? 'border-amber-500/80 text-amber-300 focus:border-amber-400'
@@ -1127,12 +1165,15 @@ export default function ScanModal({
                                               {s.sku} ({Number(s.cogs_total || 0).toLocaleString()}₫)
                                             </option>
                                           ))}
+                                          <option value="__CREATE_NEW_SKU__">
+                                            ➕ + Tạo phân loại SKU mới...
+                                          </option>
                                         </select>
                                       ) : (
                                         <input
                                           type="text"
                                           value={it.sku}
-                                          onChange={(e) => handleSkuChangeForCardItem(card.tempId, it.id, e.target.value)}
+                                          onChange={(e) => handleSkuChangeForCardItem(card.tempId, it.id, e.target.value, selProd)}
                                           placeholder="10g"
                                           className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs font-mono text-rose-400 font-bold focus:outline-none focus:border-rose-500"
                                         />
@@ -1275,9 +1316,10 @@ export default function ScanModal({
       {/* UNIFIED FULL PRODUCT MODAL */}
       <ProductModal
         isOpen={productModalConfig.isOpen}
-        onClose={() => setProductModalConfig({ isOpen: false, initialProduct: null, prefilledSku: '', targetTempId: null, targetItemId: null })}
+        onClose={() => setProductModalConfig({ isOpen: false, initialProduct: null, prefilledSku: '', forceNewSkuTab: false, targetTempId: null, targetItemId: null })}
         initialProduct={productModalConfig.initialProduct}
         prefilledSku={productModalConfig.prefilledSku}
+        forceNewSkuTab={productModalConfig.forceNewSkuTab}
         defaultFeePercent={Number(settings.tiktok_fee_percent_default ?? 5.0)}
         defaultFixedFee={Number(settings.tiktok_fixed_fee_default ?? 3000)}
         onSaveProduct={onSaveProduct}

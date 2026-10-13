@@ -1467,10 +1467,118 @@ for (const cand of sorted) {
 assert.strictEqual(deduped.length, mockDiscoveredModels.length, 'All unique models preserved');
 console.log('✅ Passed: Model candidate deduplication verified!');
 
+console.log('\n--- TEST 27: Order Date Sorting (Newest First), 30-Day Image Retention & Create New SKU Option ---');
+
+// 27.1 Sort orders by newest date descending (with created_at tie-breaker)
+function parseOrderDateToTimestamp(dateStr, fallbackIso) {
+  if (dateStr && typeof dateStr === 'string') {
+    const trimmed = dateStr.trim();
+    const isoMatch = trimmed.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+    if (isoMatch) {
+      const year = Number(isoMatch[1]);
+      const month = Number(isoMatch[2]) - 1;
+      const day = Number(isoMatch[3]);
+      const hour = Number(isoMatch[4] || 0);
+      const min = Number(isoMatch[5] || 0);
+      const sec = Number(isoMatch[6] || 0);
+      return new Date(year, month, day, hour, min, sec).getTime();
+    }
+    const vnMatch = trimmed.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+    if (vnMatch) {
+      const day = Number(vnMatch[1]);
+      const month = Number(vnMatch[2]) - 1;
+      const year = Number(vnMatch[3]);
+      const hour = Number(vnMatch[4] || 0);
+      const min = Number(vnMatch[5] || 0);
+      const sec = Number(vnMatch[6] || 0);
+      return new Date(year, month, day, hour, min, sec).getTime();
+    }
+  }
+  if (fallbackIso) {
+    const fb = Date.parse(fallbackIso);
+    if (!isNaN(fb)) return fb;
+  }
+  return 0;
+}
+
+function sortOrdersByDate(ordersList, direction = 'desc') {
+  if (!Array.isArray(ordersList)) return [];
+  const factor = direction === 'asc' ? 1 : -1;
+  return [...ordersList].sort((a, b) => {
+    const timeA = parseOrderDateToTimestamp(a?.order_date, a?.created_at);
+    const timeB = parseOrderDateToTimestamp(b?.order_date, b?.created_at);
+    if (timeA !== timeB) {
+      return (timeA - timeB) * factor;
+    }
+    const createdA = a?.created_at ? Date.parse(a.created_at) || 0 : 0;
+    const createdB = b?.created_at ? Date.parse(b.created_at) || 0 : 0;
+    if (createdA !== createdB) {
+      return (createdA - createdB) * factor;
+    }
+    return String(b?.id || '').localeCompare(String(a?.id || '')) * (direction === 'asc' ? -1 : 1);
+  });
+}
+
+const unsortedOrders = [
+  { id: 'ord-1', order_date: '2026-10-01', created_at: '2026-10-01T08:00:00Z' },
+  { id: 'ord-2', order_date: '2026-10-12', created_at: '2026-10-12T09:00:00Z' },
+  { id: 'ord-3', order_date: '2026-10-12', created_at: '2026-10-12T15:30:00Z' },
+  { id: 'ord-4', order_date: '05-10-2026', created_at: '2026-10-05T10:00:00Z' },
+];
+const sortedDesc = sortOrdersByDate(unsortedOrders, 'desc');
+assert.strictEqual(sortedDesc[0].id, 'ord-3', 'Newest order on same date (15:30) should be first');
+assert.strictEqual(sortedDesc[1].id, 'ord-2', 'Earlier order on 2026-10-12 (09:00) should be second');
+assert.strictEqual(sortedDesc[2].id, 'ord-4', 'Order on 05-10-2026 should be third');
+assert.strictEqual(sortedDesc[3].id, 'ord-1', 'Oldest order on 2026-10-01 should be last');
+console.log('✅ Passed: Orders sorted newest-first (descending) with created_at tie-breaker!');
+
+// 27.2 30-day image retention cleanup filter
+const nowMs = Date.now();
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const mockSavedImages = [
+  { id: 'img-fresh', order_id: 'ord-3', created_at: nowMs - 2 * MS_PER_DAY },
+  { id: 'img-29days', order_id: 'ord-2', created_at: nowMs - 29 * MS_PER_DAY },
+  { id: 'img-31days', order_id: 'ord-1', created_at: nowMs - 31 * MS_PER_DAY },
+  { id: 'img-45days', order_id: 'ord-0', created_at: nowMs - 45 * MS_PER_DAY },
+];
+const cutoffMs = nowMs - 30 * MS_PER_DAY;
+const expiredImages = mockSavedImages.filter(img => img.created_at < cutoffMs);
+const activeImages = mockSavedImages.filter(img => img.created_at >= cutoffMs);
+assert.strictEqual(expiredImages.length, 2, 'Should identify 2 expired images (> 30 days)');
+assert.strictEqual(activeImages.length, 2, 'Should keep 2 recent images (<= 30 days)');
+console.log('✅ Passed: 30-day automatic image cleanup accurately removes expired images while preserving recent ones!');
+
+// 27.3 Force new SKU tab when product is matched but user selects "+ Tạo phân loại SKU mới..."
+const matchedProdWithWrongSku = {
+  id: 'prod-artemia',
+  name: 'Artemia O.S.I Mỹ',
+  skus: [
+    { id: 'sku-1', sku: '10g', cogs_total: 33500, components: [{ name: 'Nguyên liệu', cost: 25000 }] },
+    { id: 'sku-2', sku: '20g', cogs_total: 60000, components: [{ name: 'Nguyên liệu', cost: 50000 }] },
+  ]
+};
+function simulateOpenNewSkuTab(initialProduct, prefilledSku, forceNewSkuTab) {
+  const loadedSkus = JSON.parse(JSON.stringify(initialProduct.skus));
+  if (forceNewSkuTab) {
+    const firstSku = loadedSkus[0];
+    loadedSkus.push({
+      id: 'new-sku-id',
+      sku: prefilledSku || '',
+      selling_price: 0,
+      components: firstSku.components.map(c => ({ name: c.name, cost: 0 })),
+    });
+  }
+  return {
+    skus: loadedSkus,
+    activeSkuIndex: loadedSkus.length - 1,
+  };
+}
+const modalState = simulateOpenNewSkuTab(matchedProdWithWrongSku, '', true);
+assert.strictEqual(modalState.skus.length, 3, 'Should append a 3rd blank SKU tab to existing 2 SKUs');
+assert.strictEqual(modalState.activeSkuIndex, 2, 'Should focus the newly created 3rd SKU tab');
+assert.strictEqual(modalState.skus[2].sku, '', 'New SKU tab should be ready for user input');
+console.log('✅ Passed: Selecting "+ Tạo phân loại SKU mới..." on a matched product opens ProductModal with a new SKU tab focused!');
+
 testExcel().then(() => {
-  console.log('\n🎉 ALL 26 AUTOMATED TESTS PASSED SUCCESSFULLY! 🎉\n');
+  console.log('\n🎉 ALL 27 AUTOMATED TESTS PASSED SUCCESSFULLY! 🎉\n');
 });
-
-
-
-

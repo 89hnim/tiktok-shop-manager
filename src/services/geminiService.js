@@ -484,6 +484,7 @@ export async function testGeminiApiKey(apiKey) {
             displayName: cand.displayName || cand.modelName,
           };
           saveSettings({
+            gemini_api_key: key,
             gemini_active_model: cand.modelName,
             gemini_active_version: cand.apiVersion,
           });

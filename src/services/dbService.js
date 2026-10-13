@@ -4,6 +4,8 @@
  * Supports both Electron IPC (desktop persistent SQLite) and local fallback.
  */
 
+import { deleteOrderImage, saveOrderImage } from './imageStorageService';
+
 const STORAGE_KEYS = {
   SETTINGS: 'tiktok_shop_settings',
   PRODUCTS: 'tiktok_shop_products',
@@ -22,6 +24,7 @@ const DEFAULT_SETTINGS = {
   gemini_api_key: '',
   gemini_active_model: '',
   gemini_active_version: '',
+  image_retention_days: 30, // Auto delete saved label images after 30 days
 };
 
 /**
@@ -330,12 +333,69 @@ export function applyFeesToAllProducts(feePercent, fixedFee) {
 }
 
 /**
+ * Parse an order_date string (YYYY-MM-DD HH:mm, YYYY-MM-DD, DD-MM-YYYY, etc.) into a comparable timestamp
+ */
+export function parseOrderDateToTimestamp(dateStr, fallbackCreatedAt) {
+  if (dateStr) {
+    const str = String(dateStr).trim();
+    // Match YYYY-MM-DD (with optional HH:mm:ss)
+    const isoMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s]+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+    if (isoMatch) {
+      const y = Number(isoMatch[1]);
+      const m = Number(isoMatch[2]) - 1;
+      const d = Number(isoMatch[3]);
+      const hh = Number(isoMatch[4] || 0);
+      const mm = Number(isoMatch[5] || 0);
+      const ss = Number(isoMatch[6] || 0);
+      return new Date(y, m, d, hh, mm, ss).getTime();
+    }
+    // Match DD-MM-YYYY or DD/MM/YYYY
+    const dmyMatch = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+    if (dmyMatch) {
+      const d = Number(dmyMatch[1]);
+      const m = Number(dmyMatch[2]) - 1;
+      const y = Number(dmyMatch[3]);
+      const hh = Number(dmyMatch[4] || 0);
+      const mm = Number(dmyMatch[5] || 0);
+      const ss = Number(dmyMatch[6] || 0);
+      return new Date(y, m, d, hh, mm, ss).getTime();
+    }
+    const parsed = Date.parse(str);
+    if (!isNaN(parsed)) return parsed;
+  }
+  if (fallbackCreatedAt) {
+    const parsedFallback = Date.parse(fallbackCreatedAt);
+    if (!isNaN(parsedFallback)) return parsedFallback;
+  }
+  return 0;
+}
+
+/**
+ * Sort orders by order_date descending (newest first), with created_at descending as tie-breaker
+ */
+export function sortOrdersByDate(orders, direction = 'desc') {
+  if (!Array.isArray(orders)) return [];
+  const mult = direction === 'asc' ? 1 : -1;
+  return [...orders].sort((a, b) => {
+    const timeA = parseOrderDateToTimestamp(a.order_date, a.created_at);
+    const timeB = parseOrderDateToTimestamp(b.order_date, b.created_at);
+    if (timeA !== timeB) {
+      return (timeA - timeB) * mult;
+    }
+    const createdA = a.created_at ? (Date.parse(a.created_at) || 0) : 0;
+    const createdB = b.created_at ? (Date.parse(b.created_at) || 0) : 0;
+    return (createdA - createdB) * mult;
+  });
+}
+
+/**
  * Orders API
  */
 export function getOrders() {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.ORDERS);
-    return raw ? JSON.parse(raw) : [];
+    const parsed = raw ? JSON.parse(raw) : [];
+    return sortOrdersByDate(parsed, 'desc');
   } catch (e) {
     console.error('Error reading orders:', e);
     return [];
@@ -486,10 +546,20 @@ export function createOrderWithSnapshot(orderData, matchedProduct = null, matche
       ? Number(orderData.settled_amount)
       : null,
     note: orderData.note || '',
+    has_image: Boolean(orderData.has_image || orderData.image_source),
 
     created_at: orderData.created_at || now,
     updated_at: now,
   };
+
+  // Asynchronously compress and persist shipping label image into IndexedDB if provided
+  if (orderData.image_source) {
+    saveOrderImage({
+      orderId: newOrder.id,
+      trackingCode: newOrder.tracking_code,
+      fileOrUrl: orderData.image_source,
+    }).catch(() => {});
+  }
 
   const orders = getOrders();
   const existingIdx = orders.findIndex(o => o.id === newOrder.id || (newOrder.tracking_code && o.tracking_code === newOrder.tracking_code));
@@ -499,7 +569,8 @@ export function createOrderWithSnapshot(orderData, matchedProduct = null, matche
     orders.unshift(newOrder);
   }
 
-  localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(orders));
+  const sortedOrders = sortOrdersByDate(orders, 'desc');
+  localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(sortedOrders));
   triggerSync();
   return newOrder;
 }
@@ -657,13 +728,19 @@ export function updateOrderWithSnapshot(orderId, orderData) {
     updated_at: now,
   };
 
-  localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(orders));
+  const sortedOrders = sortOrdersByDate(orders, 'desc');
+  localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(sortedOrders));
   triggerSync();
   return orders[index];
 }
 
 export function deleteOrder(orderId) {
-  const orders = getOrders().filter(o => o.id !== orderId);
+  const allOrders = getOrders();
+  const target = allOrders.find(o => o.id === orderId);
+  if (target) {
+    deleteOrderImage(target.id, target.tracking_code).catch(() => {});
+  }
+  const orders = allOrders.filter(o => o.id !== orderId);
   localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(orders));
   triggerSync();
   return true;
