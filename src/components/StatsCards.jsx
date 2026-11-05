@@ -9,7 +9,7 @@ import {
   RotateCcw,
   Wallet
 } from 'lucide-react';
-import { getOrderTotalCogs } from '../services/dbService';
+import { getOrderTotalCogs, getOrderProfit } from '../services/dbService';
 
 export default function StatsCards({ orders = [] }) {
   const totalOrders = orders.length;
@@ -25,16 +25,23 @@ export default function StatsCards({ orders = [] }) {
   // Calculate financials for SETTLED orders
   let totalSettledRevenue = 0;
   let totalSettledCogs = 0;
+  let netProfit = 0;
 
   settledOrders.forEach(o => {
     const cogs = getOrderTotalCogs(o);
-    totalSettledCogs += cogs;
+    const profit = getOrderProfit(o);
     if (o.settled_amount !== null && o.settled_amount !== undefined) {
-      totalSettledRevenue += Number(o.settled_amount);
+      const settled = Number(o.settled_amount);
+      totalSettledRevenue += settled;
+      // If settled_amount is negative, goods were returned into stock so COGS is not lost
+      if (settled >= 0) {
+        totalSettledCogs += cogs;
+      }
+    }
+    if (profit !== null) {
+      netProfit += profit;
     }
   });
-
-  const netProfit = totalSettledRevenue - totalSettledCogs;
 
   // Total cogs of ALL orders
   const totalAllCogs = orders.reduce((sum, o) => sum + getOrderTotalCogs(o), 0);

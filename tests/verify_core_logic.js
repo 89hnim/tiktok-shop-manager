@@ -134,7 +134,21 @@ assert.strictEqual(order1TotalCogs, 67000);
 console.log('✅ Passed: Deleting product from catalog leaves historical order records 100% intact without any loss or mutation!');
 
 console.log('\n--- TEST 3: Negative Settlement & Real Profit Calculation ---');
-// Suppose order had a return penalty: settled_amount = -35,000 VND
+// When settled_amount is negative (< 0), profit equals exactly settled_amount without subtracting COGS (goods returned into stock)
+function mockGetOrderProfit(order) {
+  if (!order) return null;
+  const settled = order.settled_amount;
+  if (settled === null || settled === undefined || settled === '') return null;
+  const numSettled = Number(settled);
+  if (numSettled < 0) {
+    return numSettled;
+  }
+  const totalCogs = (order.total_order_cogs !== undefined && order.total_order_cogs !== null)
+    ? Number(order.total_order_cogs)
+    : (Number(order.cogs_snapshot) || 0) * (Number(order.quantity) || 1);
+  return numSettled - totalCogs;
+}
+
 const returnOrder = {
   tracking_code: '862566593360',
   quantity: 1,
@@ -143,10 +157,36 @@ const returnOrder = {
   settled_amount: -35000, // sàn phạt phí hoàn
   note: 'đơn hoàn',
 };
-const totalCogs = returnOrder.cogs_snapshot * returnOrder.quantity;
-const netProfit = returnOrder.settled_amount - totalCogs; // -35000 - 33500 = -68500
-assert.strictEqual(netProfit, -68500);
-console.log(`✅ Passed: Return Order calculated correctly: Settled (-35,000) - COGS (33,500) = Net Profit (${netProfit.toLocaleString('vi-VN')} ₫)`);
+const netProfit = mockGetOrderProfit(returnOrder);
+assert.strictEqual(netProfit, -35000);
+console.log(`✅ Passed: Return Order calculated correctly: Settled (-35,000) -> Net Profit is exactly Settled (${netProfit.toLocaleString('vi-VN')} ₫) without subtracting COGS`);
+
+// Verify positive settlement
+const normalOrder = {
+  quantity: 2,
+  cogs_snapshot: 33500,
+  is_settled: true,
+  settled_amount: 100000,
+};
+assert.strictEqual(mockGetOrderProfit(normalOrder), 33000, 'Positive settlement profit = 100,000 - 67,000 = 33,000');
+
+// Verify zero settlement
+const zeroOrder = {
+  quantity: 1,
+  cogs_snapshot: 33500,
+  is_settled: true,
+  settled_amount: 0,
+};
+assert.strictEqual(mockGetOrderProfit(zeroOrder), -33500, 'Zero settlement profit = 0 - 33,500 = -33,500');
+
+// Verify unsettled order
+const unsettledOrder = {
+  quantity: 1,
+  cogs_snapshot: 33500,
+  is_settled: false,
+  settled_amount: null,
+};
+assert.strictEqual(mockGetOrderProfit(unsettledOrder), null, 'Unsettled order profit should be null');
 
 console.log('\n--- TEST 4: Excel Generation & Formatting ---');
 async function testExcel() {

@@ -417,6 +417,24 @@ export function getOrderTotalCogs(order) {
 }
 
 /**
+ * Helper to compute actual profit for an order.
+ * If settled_amount is negative (< 0), profit equals exactly settled_amount (no COGS deducted).
+ * If settled_amount is positive or zero (>= 0), profit = settled_amount - totalCogs.
+ * If settled_amount is null/undefined/empty, returns null.
+ */
+export function getOrderProfit(order) {
+  if (!order) return null;
+  const settled = order.settled_amount;
+  if (settled === null || settled === undefined || settled === '') return null;
+  const numSettled = Number(settled);
+  if (numSettled < 0) {
+    return numSettled;
+  }
+  const totalCogs = getOrderTotalCogs(order);
+  return numSettled - totalCogs;
+}
+
+/**
  * Create Order with Cost Snapshot
  * Clones product costs of the exact SKU variant at this point in time!
  * Supports multi-product and multi-SKU orders with individual item snapshots.

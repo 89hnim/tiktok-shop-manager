@@ -21,7 +21,7 @@ import {
   Tag, 
   PhoneCall 
 } from 'lucide-react';
-import { getOrderTotalCogs, sortOrdersByDate } from '../services/dbService';
+import { getOrderTotalCogs, getOrderProfit, sortOrdersByDate } from '../services/dbService';
 import { getOrderImagesMetadata } from '../services/imageStorageService';
 import StatsCards from './StatsCards';
 import OrderImageModal from './OrderImageModal';
@@ -390,9 +390,7 @@ export default function OrderTable({
                 const cogsUnit = qty > 0 ? Math.round(totalCogs / qty) : (order.cogs_snapshot || 0);
                 const isSettled = Boolean(order.is_settled);
                 const settledAmount = order.settled_amount;
-                const actualProfit = settledAmount !== null && settledAmount !== undefined
-                  ? Number(settledAmount) - totalCogs
-                  : null;
+                const actualProfit = getOrderProfit(order);
 
                 const isReturn = (
                   (order.note && /hoàn|hủy|tra lai|trả lại|bom/i.test(order.note)) ||
@@ -649,7 +647,7 @@ export default function OrderTable({
           <span>Hiển thị <strong className="text-white">{filteredOrders.length}</strong> / {orders.length} đơn</span>
         </div>
         <div className="flex items-center gap-4 font-mono">
-          <span>Tổng vốn: <strong className="text-amber-300">{formatMoney(filteredOrders.reduce((sum, o) => sum + ((o.cogs_snapshot || 0) * (o.quantity || 1)), 0))}</strong></span>
+          <span>Tổng vốn: <strong className="text-amber-300">{formatMoney(filteredOrders.reduce((sum, o) => sum + getOrderTotalCogs(o), 0))}</strong></span>
           <span>Tất toán: <strong className="text-emerald-300">{formatMoney(filteredOrders.reduce((sum, o) => sum + (o.settled_amount ? Number(o.settled_amount) : 0), 0))}</strong></span>
         </div>
       </div>
