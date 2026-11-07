@@ -15,6 +15,7 @@ import {
   CheckCircle2
 } from 'lucide-react';
 import { getOrderImage, saveOrderImage, deleteOrderImage } from '../services/imageStorageService';
+import { formatDateVN } from '../utils/dateUtils';
 
 export default function OrderImageModal({
   isOpen,
@@ -153,7 +154,7 @@ export default function OrderImageModal({
                 </span>
                 <span className="flex items-center gap-1 font-mono text-[11px]">
                   <Calendar className="w-3 h-3 text-slate-500" />
-                  <span>{order.order_date || '-'}</span>
+                  <span>{formatDateVN(order.order_date, true)}</span>
                 </span>
                 {daysLeft !== null && (
                   <span className="flex items-center gap-1 text-amber-300/90 text-[11px]">

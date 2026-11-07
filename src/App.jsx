@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import Header from './components/Header';
 import OrderTable from './components/OrderTable';
 import ProductManager from './components/ProductManager';
+import InventoryManager from './components/InventoryManager';
+import FishOrderManager from './components/FishOrderManager';
+import SidebarDock from './components/SidebarDock';
 import ScanModal from './components/ScanModal';
 import ManualOrderModal from './components/ManualOrderModal';
 import CustomerModal from './components/CustomerModal';
@@ -23,13 +26,16 @@ import {
   batchCreateOrders,
   updateOrderField,
   updateOrderWithSnapshot,
-  deleteOrder
+  deleteOrder,
+  getInventoryExpenses,
+  getFishOrders
 } from './services/dbService';
 import { exportToExcelFile } from './services/excelService';
 import { cleanupExpiredOrderImages } from './services/imageStorageService';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('orders'); // 'orders' | 'products'
+  const [mainTab, setMainTab] = useState('tiktok'); // 'tiktok' | 'inventory' | 'fish_orders'
+  const [activeTab, setActiveTab] = useState('orders'); // 'orders' | 'products' (for TikTok Shop)
   const [orders, setOrders] = useState([]);
   const [products, setProducts] = useState([]);
   const [settings, setSettings] = useState({});
@@ -159,15 +165,17 @@ export default function App() {
   };
 
   const handleOpenExcel = async () => {
+    const invExpenses = getInventoryExpenses();
+    const fishOrds = getFishOrders();
     if (window.electronAPI && window.electronAPI.openExcel) {
       const res = await window.electronAPI.openExcel();
       if (!res.success) {
         alert(res.error || 'Chưa thể mở file Excel. Hãy tải file trực tiếp.');
-        await exportToExcelFile(orders, products);
+        await exportToExcelFile(orders, products, invExpenses, fishOrds);
       }
     } else {
       // In web browser: trigger direct excel download
-      await exportToExcelFile(orders, products);
+      await exportToExcelFile(orders, products, invExpenses, fishOrds);
     }
   };
 
@@ -181,15 +189,12 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col selection:bg-rose-500 selection:text-white">
-      {/* Header Bar */}
-      <Header
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        onOpenScan={() => setIsScanOpen(true)}
-        onOpenManualOrder={() => setIsManualOrderOpen(true)}
-        onOpenProducts={() => setActiveTab('products')}
-        onOpenSettings={() => setIsSettingsOpen(true)}
+      {/* Floating Vertical Capsule Dock (Left Sidebar - Level 1 Navigation) */}
+      <SidebarDock
+        activeTab={mainTab}
+        setActiveTab={setMainTab}
         onOpenExcel={handleOpenExcel}
+        onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenErrorLog={() => {
           setIsErrorLogOpen(true);
           setUnreadErrorsCount(0);
@@ -199,36 +204,77 @@ export default function App() {
         onOpenUpdateModal={() => setIsUpdateModalOpen(true)}
       />
 
-      {/* Main Content Area Protected by ErrorBoundary */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
-        <ErrorBoundary onOpenErrorLog={() => setIsErrorLogOpen(true)}>
-          {activeTab === 'orders' ? (
-            <div>
-              {/* Excel-like Spreadsheet Data Grid with Integrated Filtered Stats */}
-              <OrderTable
-                orders={orders}
-                onUpdateOrder={handleUpdateOrder}
-                onDeleteOrder={handleDeleteOrder}
-                onSelectCustomer={handleSelectCustomer}
-                onEditOrder={(order) => setEditingOrder(order)}
-                retentionDays={Number(settings?.image_retention_days ?? 30)}
-              />
-            </div>
-          ) : (
-            <div>
-              {/* Products & Cost Snapshot Manager */}
-              <ProductManager
-                products={products}
-                settings={settings}
-                onSaveProduct={handleSaveProduct}
-                onDeleteProduct={handleDeleteProduct}
-                onApplyFeesToAll={handleApplyFeesToAll}
-                onUpdateSettings={handleSaveSettings}
-              />
-            </div>
-          )}
-        </ErrorBoundary>
-      </main>
+      {/* Main Workspace Area with left clearance for the floating dock */}
+      <div className="flex-1 flex flex-col pl-18 sm:pl-20 transition-all duration-200">
+        {mainTab === 'tiktok' && (
+          <>
+            {/* Header Bar for TikTok Shop */}
+            <Header
+              activeTab={activeTab}
+              setActiveTab={setActiveTab}
+              onOpenScan={() => setIsScanOpen(true)}
+              onOpenManualOrder={() => setIsManualOrderOpen(true)}
+              onOpenProducts={() => setActiveTab('products')}
+              onOpenSettings={() => setIsSettingsOpen(true)}
+              onOpenExcel={handleOpenExcel}
+              onOpenErrorLog={() => {
+                setIsErrorLogOpen(true);
+                setUnreadErrorsCount(0);
+              }}
+              unreadErrorsCount={unreadErrorsCount}
+              updateInfo={updateInfo}
+              onOpenUpdateModal={() => setIsUpdateModalOpen(true)}
+            />
+
+            {/* Main Content Area Protected by ErrorBoundary */}
+            <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+              <ErrorBoundary onOpenErrorLog={() => setIsErrorLogOpen(true)}>
+                {activeTab === 'orders' ? (
+                  <div>
+                    {/* Excel-like Spreadsheet Data Grid with Integrated Filtered Stats */}
+                    <OrderTable
+                      orders={orders}
+                      onUpdateOrder={handleUpdateOrder}
+                      onDeleteOrder={handleDeleteOrder}
+                      onSelectCustomer={handleSelectCustomer}
+                      onEditOrder={(order) => setEditingOrder(order)}
+                      retentionDays={Number(settings?.image_retention_days ?? 30)}
+                    />
+                  </div>
+                ) : (
+                  <div>
+                    {/* Products & Cost Snapshot Manager */}
+                    <ProductManager
+                      products={products}
+                      settings={settings}
+                      onSaveProduct={handleSaveProduct}
+                      onDeleteProduct={handleDeleteProduct}
+                      onApplyFeesToAll={handleApplyFeesToAll}
+                      onUpdateSettings={handleSaveSettings}
+                    />
+                  </div>
+                )}
+              </ErrorBoundary>
+            </main>
+          </>
+        )}
+
+        {mainTab === 'inventory' && (
+          <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+            <ErrorBoundary onOpenErrorLog={() => setIsErrorLogOpen(true)}>
+              <InventoryManager onOpenExcel={handleOpenExcel} />
+            </ErrorBoundary>
+          </main>
+        )}
+
+        {mainTab === 'fish_orders' && (
+          <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+            <ErrorBoundary onOpenErrorLog={() => setIsErrorLogOpen(true)}>
+              <FishOrderManager onOpenExcel={handleOpenExcel} />
+            </ErrorBoundary>
+          </main>
+        )}
+      </div>
 
       {/* OCR Scan Modal Protected by ErrorBoundary */}
       <ErrorBoundary onOpenErrorLog={() => setIsErrorLogOpen(true)}>

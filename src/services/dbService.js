@@ -10,6 +10,8 @@ const STORAGE_KEYS = {
   SETTINGS: 'tiktok_shop_settings',
   PRODUCTS: 'tiktok_shop_products',
   ORDERS: 'tiktok_shop_orders',
+  INVENTORY_EXPENSES: 'tiktok_shop_inventory_expenses',
+  FISH_ORDERS: 'tiktok_shop_fish_orders',
 };
 
 // Default initial settings
@@ -764,6 +766,190 @@ export function deleteOrder(orderId) {
   return true;
 }
 
+// ================= INVENTORY EXPENSES API (TAB 2) =================
+
+export const DEFAULT_INVENTORY_EXPENSES = {
+  tiktok_shop: [],
+  fish: [],
+  supplies: [],
+};
+
+/**
+ * Get all inventory expense items partitioned into 3 categories:
+ * - tiktok_shop: []
+ * - fish: []
+ * - supplies: []
+ */
+export function getInventoryExpenses() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.INVENTORY_EXPENSES);
+    if (!raw) return { ...DEFAULT_INVENTORY_EXPENSES };
+    const parsed = JSON.parse(raw);
+    return {
+      tiktok_shop: Array.isArray(parsed?.tiktok_shop) ? parsed.tiktok_shop : [],
+      fish: Array.isArray(parsed?.fish) ? parsed.fish : [],
+      supplies: Array.isArray(parsed?.supplies) ? parsed.supplies : [],
+    };
+  } catch (e) {
+    console.error('Error reading inventory expenses:', e);
+    return { ...DEFAULT_INVENTORY_EXPENSES };
+  }
+}
+
+/**
+ * Save inventory expense lists
+ */
+export function saveInventoryExpenses(expenses) {
+  const payload = {
+    tiktok_shop: Array.isArray(expenses?.tiktok_shop) ? expenses.tiktok_shop : [],
+    fish: Array.isArray(expenses?.fish) ? expenses.fish : [],
+    supplies: Array.isArray(expenses?.supplies) ? expenses.supplies : [],
+  };
+  localStorage.setItem(STORAGE_KEYS.INVENTORY_EXPENSES, JSON.stringify(payload));
+  triggerSync();
+  return payload;
+}
+
+/**
+ * Calculate totals for each column and total for whole warehouse, including settlement status
+ */
+export function getInventoryTotals(expenses = {}) {
+  const tiktokList = expenses?.tiktok_shop || [];
+  const fishList = expenses?.fish || [];
+  const suppliesList = expenses?.supplies || [];
+
+  const totalTiktok = tiktokList.reduce((sum, it) => sum + (Number(it?.amount) || 0), 0);
+  const tiktokSettled = tiktokList.filter(it => it.is_settled).reduce((sum, it) => sum + (Number(it?.amount) || 0), 0);
+  const tiktokPending = totalTiktok - tiktokSettled;
+
+  const totalFish = fishList.reduce((sum, it) => sum + (Number(it?.amount) || 0), 0);
+  const fishSettled = fishList.filter(it => it.is_settled).reduce((sum, it) => sum + (Number(it?.amount) || 0), 0);
+  const fishPending = totalFish - fishSettled;
+
+  const totalSupplies = suppliesList.reduce((sum, it) => sum + (Number(it?.amount) || 0), 0);
+  const suppliesSettled = suppliesList.filter(it => it.is_settled).reduce((sum, it) => sum + (Number(it?.amount) || 0), 0);
+  const suppliesPending = totalSupplies - suppliesSettled;
+
+  const grandTotal = totalTiktok + totalFish + totalSupplies;
+  const grandSettled = tiktokSettled + fishSettled + suppliesSettled;
+  const grandPending = grandTotal - grandSettled;
+
+  return {
+    totalTiktok,
+    tiktokSettled,
+    tiktokPending,
+    totalFish,
+    fishSettled,
+    fishPending,
+    totalSupplies,
+    suppliesSettled,
+    suppliesPending,
+    grandTotal,
+    grandSettled,
+    grandPending,
+  };
+}
+
+// ================= FISH ORDERS API (TAB 3) =================
+
+/**
+ * Get all direct sales fish orders
+ */
+export function getFishOrders() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.FISH_ORDERS);
+    const list = raw ? JSON.parse(raw) : [];
+    const normalized = list.map(ord => {
+      const fishPrice = ord.fish_price !== undefined && ord.fish_price !== null 
+        ? Math.max(0, Number(ord.fish_price) || 0)
+        : Math.max(0, (Number(ord.total_amount) || 0) - (Number(ord.shipping_fee) || 0));
+      const shippingFee = Math.max(0, Number(ord.shipping_fee) || 0);
+      return {
+        ...ord,
+        fish_price: fishPrice,
+        shipping_fee: shippingFee,
+        total_amount: fishPrice + shippingFee,
+      };
+    });
+    return sortFishOrdersByDate(normalized, 'desc');
+  } catch (e) {
+    console.error('Error reading fish orders:', e);
+    return [];
+  }
+}
+
+/**
+ * Sort fish orders by order_date descending / ascending
+ */
+export function sortFishOrdersByDate(ordersList, direction = 'desc') {
+  if (!Array.isArray(ordersList)) return [];
+  const factor = direction === 'asc' ? 1 : -1;
+  return [...ordersList].sort((a, b) => {
+    const timeA = parseOrderDateToTimestamp(a?.order_date, a?.created_at);
+    const timeB = parseOrderDateToTimestamp(b?.order_date, b?.created_at);
+    if (timeA !== timeB) {
+      return (timeA - timeB) * factor;
+    }
+    const createdA = a?.created_at ? Date.parse(a.created_at) || 0 : 0;
+    const createdB = b?.created_at ? Date.parse(b.created_at) || 0 : 0;
+    if (createdA !== createdB) {
+      return (createdA - createdB) * factor;
+    }
+    return String(b?.id || '').localeCompare(String(a?.id || '')) * (direction === 'asc' ? -1 : 1);
+  });
+}
+
+/**
+ * Save or update a fish order
+ */
+export function saveFishOrder(orderData) {
+  const orders = getFishOrders();
+  const now = new Date().toISOString();
+  const isEditing = Boolean(orderData.id);
+  const id = isEditing ? orderData.id : generateUUID();
+
+  const fishPrice = Math.max(0, Number(orderData.fish_price) || 0);
+  const shippingFee = Math.max(0, Number(orderData.shipping_fee) || 0);
+  const totalAmount = fishPrice + shippingFee;
+
+  const formattedOrder = {
+    id,
+    order_date: orderData.order_date || now.slice(0, 10),
+    customer_name: (orderData.customer_name || '').trim(),
+    customer_phone: (orderData.customer_phone || '').trim(),
+    fish_name: (orderData.fish_name || '').trim(),
+    fish_price: fishPrice,
+    shipping_fee: shippingFee,
+    total_amount: totalAmount,
+    note: (orderData.note || '').trim(),
+    created_at: isEditing ? (orderData.created_at || now) : now,
+    updated_at: now,
+  };
+
+  let updatedList;
+  if (isEditing) {
+    updatedList = orders.map(o => o.id === id ? formattedOrder : o);
+  } else {
+    updatedList = [formattedOrder, ...orders];
+  }
+
+  const sorted = sortFishOrdersByDate(updatedList, 'desc');
+  localStorage.setItem(STORAGE_KEYS.FISH_ORDERS, JSON.stringify(sorted));
+  triggerSync();
+  return formattedOrder;
+}
+
+/**
+ * Delete a fish order
+ */
+export function deleteFishOrder(orderId) {
+  const orders = getFishOrders();
+  const updatedList = orders.filter(o => o.id !== orderId);
+  localStorage.setItem(STORAGE_KEYS.FISH_ORDERS, JSON.stringify(updatedList));
+  triggerSync();
+  return true;
+}
+
 /**
  * Helper to trigger sync event to Electron / Excel
  */
@@ -773,6 +959,8 @@ function triggerSync() {
     window.electronAPI.syncExcel({
       orders: getOrders(),
       products: getProducts(),
+      inventoryExpenses: getInventoryExpenses(),
+      fishOrders: getFishOrders(),
     });
   }
 }

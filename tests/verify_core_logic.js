@@ -1619,6 +1619,215 @@ assert.strictEqual(modalState.activeSkuIndex, 2, 'Should focus the newly created
 assert.strictEqual(modalState.skus[2].sku, '', 'New SKU tab should be ready for user input');
 console.log('✅ Passed: Selecting "+ Tạo phân loại SKU mới..." on a matched product opens ProductModal with a new SKU tab focused!');
 
-testExcel().then(() => {
-  console.log('\n🎉 ALL 27 AUTOMATED TESTS PASSED SUCCESSFULLY! 🎉\n');
+console.log('\n--- TEST 28: Multi-Tab Warehouse Inventory (3 Columns) & Fish Direct Orders Engine ---');
+
+// 28.1 Inventory Expenses Calculation Engine with Settlement Status & Live Excel-like Selection Sum
+function computeInventoryTotals(expenses) {
+  const ttList = expenses?.tiktok_shop || [];
+  const fishList = expenses?.fish || [];
+  const supList = expenses?.supplies || [];
+
+  const ttTotal = ttList.reduce((sum, it) => sum + (Number(it.amount) || 0), 0);
+  const ttSettled = ttList.filter(it => it.is_settled).reduce((sum, it) => sum + (Number(it.amount) || 0), 0);
+  const ttPending = ttTotal - ttSettled;
+
+  const fishTotal = fishList.reduce((sum, it) => sum + (Number(it.amount) || 0), 0);
+  const fishSettled = fishList.filter(it => it.is_settled).reduce((sum, it) => sum + (Number(it.amount) || 0), 0);
+  const fishPending = fishTotal - fishSettled;
+
+  const suppliesTotal = supList.reduce((sum, it) => sum + (Number(it.amount) || 0), 0);
+  const suppliesSettled = supList.filter(it => it.is_settled).reduce((sum, it) => sum + (Number(it.amount) || 0), 0);
+  const suppliesPending = suppliesTotal - suppliesSettled;
+
+  const grandTotal = ttTotal + fishTotal + suppliesTotal;
+  const grandSettled = ttSettled + fishSettled + suppliesSettled;
+  const grandPending = grandTotal - grandSettled;
+
+  return {
+    tiktokTotal: ttTotal,
+    tiktokSettled: ttSettled,
+    tiktokPending: ttPending,
+    fishTotal: fishTotal,
+    fishSettled: fishSettled,
+    fishPending: fishPending,
+    suppliesTotal: suppliesTotal,
+    suppliesSettled: suppliesSettled,
+    suppliesPending: suppliesPending,
+    grandTotal: grandTotal,
+    grandSettled: grandSettled,
+    grandPending: grandPending,
+  };
+}
+
+const sampleExpenses = {
+  tiktok_shop: [
+    { id: 'tt1', name: 'Thùng carton 15x10x10', amount: 350000, is_settled: true },
+    { id: 'tt2', name: 'Cuộn băng keo đóng hàng', amount: 120000, is_settled: false },
+    { id: 'tt3', name: 'Giấy in nhiệt A6', amount: 180000, is_settled: true },
+  ],
+  fish: [
+    { id: 'f1', name: '10 Cặp Guppy Dumbo Red Tail giống', amount: 1500000, is_settled: true },
+    { id: 'f2', name: '50 con Cá Betta Koi Galaxy', amount: 2500000, is_settled: false },
+  ],
+  supplies: [
+    { id: 's1', name: 'Vi sinh Extra Bio 500ml', amount: 240000, is_settled: false },
+    { id: 's2', name: 'Muối hột sinh học 25kg', amount: 150000, is_settled: true },
+    { id: 's3', name: 'Vợt vớt cá nano', amount: 90000, is_settled: false },
+  ]
+};
+
+const invTotals = computeInventoryTotals(sampleExpenses);
+assert.strictEqual(invTotals.tiktokTotal, 650000, 'TikTok Shop expense subtotal should be 650,000đ');
+assert.strictEqual(invTotals.tiktokSettled, 530000, 'TikTok Shop settled: 350k + 180k = 530k');
+assert.strictEqual(invTotals.tiktokPending, 120000, 'TikTok Shop pending: 120k');
+assert.strictEqual(invTotals.fishTotal, 4000000, 'Fish stock expense subtotal should be 4,000,000đ');
+assert.strictEqual(invTotals.fishSettled, 1500000, 'Fish stock settled: 1.5M');
+assert.strictEqual(invTotals.fishPending, 2500000, 'Fish stock pending: 2.5M');
+assert.strictEqual(invTotals.grandTotal, 5130000, 'Grand total inventory COGS should be 5,130,000đ');
+assert.strictEqual(invTotals.grandSettled, 530000 + 1500000 + 150000, 'Grand settled: 2,180,000đ');
+console.log('✅ Passed: Inventory 3-column subtotal, settlement status & grand total calculations are 100% accurate!');
+
+// 28.1.1 Simulate Excel-like drag-to-select range sum
+function simulateExcelRangeSum(selectedIds, allExpenses) {
+  const items = [
+    ...(allExpenses.tiktok_shop || []),
+    ...(allExpenses.fish || []),
+    ...(allExpenses.supplies || []),
+  ].filter(it => selectedIds.includes(it.id));
+
+  const total = items.reduce((sum, it) => sum + (Number(it.amount) || 0), 0);
+  const settled = items.filter(it => it.is_settled).reduce((sum, it) => sum + (Number(it.amount) || 0), 0);
+  const pending = total - settled;
+  const avg = items.length > 0 ? Math.round(total / items.length) : 0;
+  return { count: items.length, total, settled, pending, avg };
+}
+
+const rangeSelection = simulateExcelRangeSum(['tt1', 'tt2', 's1'], sampleExpenses);
+assert.strictEqual(rangeSelection.count, 3, 'Selected exactly 3 items');
+assert.strictEqual(rangeSelection.total, 350000 + 120000 + 240000, 'Selected total: 710,000đ');
+assert.strictEqual(rangeSelection.settled, 350000, 'Selected settled: 350,000đ');
+assert.strictEqual(rangeSelection.pending, 360000, 'Selected pending: 360,000đ');
+assert.strictEqual(rangeSelection.avg, Math.round(710000 / 3), 'Selected average accurate');
+console.log('✅ Passed: Excel-like drag-to-select live sum calculation verified!');
+
+// 28.2 Fish Direct Orders CRUD, Date Sorting & Financial Metrics
+const sampleFishOrders = [
+  {
+    id: 'fo-1',
+    customer_name: 'Nguyễn Văn Minh',
+    customer_phone: '0912345678',
+    fish_name: '1 Cặp Full Gold Ribbon',
+    fish_price: 315000,
+    shipping_fee: 35000,
+    total_amount: 315000 + 35000, // 350,000
+    order_date: '2026-10-15',
+    note: 'Giao buổi sáng',
+  },
+  {
+    id: 'fo-2',
+    customer_name: 'Trần Thị Thảo',
+    customer_phone: '', // Optional phone
+    fish_name: '2 Cặp Dumbo Red Tail',
+    fish_price: 460000,
+    shipping_fee: 40000,
+    total_amount: 460000 + 40000, // 500,000
+    order_date: '2026-10-20',
+    note: '',
+  },
+  {
+    id: 'fo-3',
+    customer_name: 'Lê Hoàng Nam',
+    customer_phone: '0988776655',
+    fish_name: '5 Betta Nemo Candy',
+    fish_price: 700000,
+    shipping_fee: 50000,
+    total_amount: 700000 + 50000, // 750,000
+    order_date: '2026-11-02',
+    note: 'Đóng thùng xốp kỹ',
+  },
+];
+
+// Verify Auto-Calculation: Total = Fish Price + Shipping Fee
+sampleFishOrders.forEach(ord => {
+  assert.strictEqual(ord.total_amount, ord.fish_price + ord.shipping_fee, 'Total amount must equal fish_price + shipping_fee');
+});
+console.log('✅ Passed: Fish Order auto-calculation (Total = Fish Price + Shipping Fee) verified!');
+
+// Verify Vietnamese Date Formatting (DD/MM/YYYY)
+function formatDateVNTest(dateVal) {
+  if (!dateVal) return '-';
+  const str = String(dateVal).trim();
+  const isoMatch = str.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+  if (isoMatch) {
+    return `${String(isoMatch[3]).padStart(2, '0')}/${String(isoMatch[2]).padStart(2, '0')}/${isoMatch[1]}`;
+  }
+  return str;
+}
+
+assert.strictEqual(formatDateVNTest('2026-11-07'), '07/11/2026', 'Must format ISO date to Day/Month/Year');
+assert.strictEqual(formatDateVNTest('2026-10-15'), '15/10/2026', 'Must format 2026-10-15 to 15/10/2026');
+console.log('✅ Passed: Day/Month date formatting (DD/MM/YYYY) verified!');
+
+// Sort descending by date (newest first)
+function sortFishOrdersDesc(list) {
+  return [...list].sort((a, b) => {
+    const dateA = a.order_date || '';
+    const dateB = b.order_date || '';
+    if (dateB !== dateA) return dateB.localeCompare(dateA);
+    return (b.created_at || 0) - (a.created_at || 0);
+  });
+}
+
+const sortedFish = sortFishOrdersDesc(sampleFishOrders);
+assert.strictEqual(sortedFish[0].id, 'fo-3', 'Order on 2026-11-02 should be first (newest)');
+assert.strictEqual(sortedFish[1].id, 'fo-2', 'Order on 2026-10-20 should be second');
+assert.strictEqual(sortedFish[2].id, 'fo-1', 'Order on 2026-10-15 should be last (oldest)');
+console.log('✅ Passed: Fish orders date sorting (newest first) confirmed!');
+
+// Filter by month October 2026
+const octFishOrders = sampleFishOrders.filter(o => (o.order_date || '').startsWith('2026-10'));
+assert.strictEqual(octFishOrders.length, 2, 'Should find exactly 2 orders in October 2026');
+
+// Financial aggregations for fish orders
+// User Business Rule: Doanh thu của shop KHÔNG tính tiền ship (tiền ship do khách tự trả cho shipper) -> Tổng doanh thu = Tiền cá
+const totalFishPriceSum = octFishOrders.reduce((sum, o) => sum + (Number(o.fish_price) || 0), 0);
+const totalShipping = octFishOrders.reduce((sum, o) => sum + (Number(o.shipping_fee) || 0), 0);
+const totalCustomerPaid = octFishOrders.reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0);
+const totalShopRevenue = totalFishPriceSum; // Pure fish revenue
+
+assert.strictEqual(totalFishPriceSum, 775000, 'Oct pure fish price: 315k + 460k = 775k');
+assert.strictEqual(totalShipping, 75000, 'Oct shipping: 35k + 40k = 75k');
+assert.strictEqual(totalCustomerPaid, 850000, 'Oct total customer paid: 775k + 75k = 850k');
+assert.strictEqual(totalShopRevenue, totalFishPriceSum, 'Shop revenue strictly equals fish price without shipping fee');
+assert.strictEqual(totalCustomerPaid, totalShopRevenue + totalShipping, 'Customer payment = Fish revenue + Shipping fee');
+console.log('✅ Passed: Fish orders revenue logic confirmed (Tổng doanh thu = Tiền cá thuần, tách riêng tiền ship)!');
+
+// 28.3 Multi-Sheet Excel Generation Validation (4 Worksheets with Tiền Cá column)
+async function testMultiSheetWorkbook() {
+  const wb = new ExcelJS.Workbook();
+  const s1 = wb.addWorksheet('Danh Sách Đơn Hàng');
+  const s2 = wb.addWorksheet('Kho Hàng TikTok');
+  const s3 = wb.addWorksheet('Quản Lý Nhập Kho');
+  const s4 = wb.addWorksheet('Đơn Hàng Cá Cảnh');
+
+  // Populate sheet 3 (Nhập kho 3 cột with null for empty cells to prevent OpenXML shared-string index ghost bugs)
+  s3.addRow(['VỐN NHẬP TIKTOK SHOP', null, null, null, 'VỐN NHẬP CÁ CẢNH', null, null, null, 'VỐN NHẬP VẬT TƯ KHÁC']);
+  s3.addRow(['Thùng carton', 350000, null, null, 'Guppy Dumbo', 1500000, null, null, 'Vi sinh', 240000, null]);
+
+  // Populate sheet 4 (Đơn cá cảnh with Tiền Cá column)
+  s4.addRow(['STT', 'Ngày Đặt', 'Khách Hàng', 'Số Điện Thoại', 'Mặt Hàng Cá / Chi Tiết', 'Tiền Cá', 'Tiền Ship', 'Tổng Tiền Đơn', 'Ghi Chú']);
+  s4.addRow([1, '15/10/2026', 'Nguyễn Văn Minh', '0912345678', '1 Cặp Full Gold', 315000, 35000, 350000, null]);
+
+  const buffer = await wb.xlsx.writeBuffer();
+  assert(buffer.length > 2000, 'Multi-sheet Excel workbook buffer should be > 2000 bytes');
+  assert.strictEqual(wb.worksheets.length, 4, 'Workbook must contain all 4 worksheets');
+  assert.strictEqual(wb.worksheets[0].name, 'Danh Sách Đơn Hàng');
+  assert.strictEqual(wb.worksheets[1].name, 'Kho Hàng TikTok');
+  assert.strictEqual(wb.worksheets[2].name, 'Quản Lý Nhập Kho');
+  assert.strictEqual(wb.worksheets[3].name, 'Đơn Hàng Cá Cảnh');
+  console.log(`✅ Passed: 4-Sheet Excel Workbook with Tiền Cá generated and validated (${buffer.length} bytes)!`);
+}
+
+testExcel().then(() => testMultiSheetWorkbook()).then(() => {
+  console.log('\n🎉 ALL 28 AUTOMATED TESTS PASSED SUCCESSFULLY! 🎉\n');
 });

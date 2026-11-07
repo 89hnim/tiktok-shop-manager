@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { getOrderTotalCogs, getOrderProfit, sortOrdersByDate } from '../services/dbService';
 import { getOrderImagesMetadata } from '../services/imageStorageService';
+import { formatDateVN } from '../utils/dateUtils';
 import StatsCards from './StatsCards';
 import OrderImageModal from './OrderImageModal';
 
@@ -441,7 +442,7 @@ export default function OrderTable({
 
                     {/* Order Date */}
                     <td className="py-2.5 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">
-                      {order.order_date || '-'}
+                      {formatDateVN(order.order_date, true)}
                     </td>
 
                     {/* Product Name & SKU (Clickable to view full details and edit) */}

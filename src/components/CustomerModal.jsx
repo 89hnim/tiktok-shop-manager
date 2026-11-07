@@ -16,6 +16,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { analyzeCustomerIdentity } from '../services/phoneMatcher';
+import { formatDateVN } from '../utils/dateUtils';
 
 export default function CustomerModal({
   isOpen,
@@ -263,7 +264,7 @@ export default function CustomerModal({
                     {(activeTab === 'case1' ? cases.case1_matchingOrders : customerOrders).map((ord) => (
                       <tr key={ord.id} className="hover:bg-slate-750/40 transition-colors">
                         <td className="py-2.5 px-3 text-white font-bold">{ord.tracking_code || '-'}</td>
-                        <td className="py-2.5 px-3 text-slate-400">{ord.order_date || '-'}</td>
+                        <td className="py-2.5 px-3 text-slate-400">{formatDateVN(ord.order_date, false)}</td>
                         <td className="py-2.5 px-3 font-sans">
                           <span className="text-slate-200 line-clamp-1">{ord.product_name}</span>
                           {ord.sku && <span className="text-[10px] text-rose-400 bg-rose-500/10 px-1 py-0.5 rounded mr-1">{ord.sku}</span>}
